@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmr-fido"
+version = "0.1.0"
+description = ""
+authors = [{ name = "Radu Cristian Leonte", email = "raducristian.leonte@gmail.com" }]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.23"
+]
+
+[project.urls]
+Homepage = "https://github.com/RaduLeonte/nmr-fido"
+Repository = "https://github.com/RaduLeonte/nmr-fido"
