@@ -1,6 +1,7 @@
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
+from nmr_fido.utils import _convert_to_index
 from scipy.signal import hilbert
 
 
@@ -593,13 +594,22 @@ PS = phase
 def extract_region(
     data: NMRData,
     *,
+    start: str | int = None,
+    end: str | int = None,
+    start_y: str | int = None,
+    end_y: str | int = None,
+    left_half: bool = False,
+    right_half: bool = False,
+    middle_half: bool = False,
+    power_of_two: bool = False,
+    multiple_of: int = None,
     # Aliases
-    time: bool = None,
+    #time: bool = None,
     left: bool = None,
     right: bool = None,
     mid: bool = None,
     pow2: bool = None,
-    sw: bool = None,
+    #sw: bool = None,
     round: int = None,
     x1: str = None,
     xn: str = None,
@@ -610,11 +620,32 @@ def extract_region(
     Desc.
 
     Args:
-        data (NMRData): The data to transpose.
+        data (NMRData): The data to extract region from.
 
     Returns:
         NMRData: Desc.
     """
+    # Handle aliases
+    if left is not None: left_half = left
+    if right is not None: right_half = right
+    if mid is not None: middle_half = mid
+    if pow2 is not None: power_of_two = pow2
+    if round is not None: multiple_of = round
+    if x1 is not None: start = x1
+    if xn is not None: end = xn
+    if y1 is not None: start_y = y1
+    if yn is not None: end_y = yn
+    
+    array = data.copy()
+    npoints = array.shape[-1]
+    
+    # Determine start and end indices
+    start_idx = _convert_to_index(data, start, npoints, default=0)
+    end_idx = _convert_to_index(data, end, npoints, default=npoints-1)
+
+    # Ensure valid index order
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
 
     raise NotImplementedError
     
@@ -729,23 +760,101 @@ ZTP = transpose
 
 def add_constant(
     data: NMRData,
-    constant: float,
+    *,
+    start: str | int = None,
+    end: str | int = None,
+    constant: float = None,
+    constant_real: float = None,
+    constant_imaginary: float = None,
+    # Alias
+    r: float = None,
+    i: float = None,
+    c: float = None,
+    x1: str | int = None,
+    xn: str | int = None,
 ) -> NMRData:
     """
-    Add a constant to the NMRData.
+    Add a constant with the NMRData.
 
     Args:
-        data (NMRData): The data to add a constant to.
+        data (NMRData): Input data.
+        start (str or int, optional): Start point or coordinate ("5.5 ppm", "1234 pts", etc.).
+        end (str or int, optional): End point or coordinate.
+        constant (float): Real value to add to both real and imaginary parts of data.
+        constant_real (float): Real value to add to real part only.
+        constant_imaginary (float): Real value to add to imaginary part only.
+
+    Aliases:
+        r: Alias for constant_real.
+        i: Alias for constant_imaginary.
+        c: Alias for constant.
+        x1: Alias for start.
+        xn: Alias for end.
 
     Returns:
-        NMRData: Data with added constant.
+        NMRData: Adjusted data.
     """
-    result = data + constant
+    # Handle aliases
+    if r is not None: constant_real = r
+    if i is not None: constant_imaginary = i
+    if c is not None: constant = c
+    if x1 is not None: start = x1
+    if xn is not None: end = xn
+    
+    
+    if constant is None and constant_real is None and constant_imaginary is None:
+        raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
+    
+    
+    array = data.copy()
+
+    npoints = array.shape[-1]
+    
+    
+    # Determine start and end indices
+    start_idx = _convert_to_index(data, start, npoints, default=0)
+    end_idx = _convert_to_index(data, end, npoints, default=npoints-1)
+    
+    
+    # Ensure valid index order
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+
+
+    slice_obj = (slice(None),) * (array.ndim - 1) + (slice(start_idx, end_idx + 1),)
+
+    if np.iscomplexobj(array):
+        # Complex data
+        if constant is not None:
+            array[slice_obj] += constant
+        
+        if constant_real is not None:
+            array.real[slice_obj] += constant_real
+        
+        if constant_imaginary is not None:
+            array.imag[slice_obj] += constant_imaginary
+    else:
+        # Real-only data
+        if constant_imaginary is not None:
+            raise ValueError("Cannot multiply imaginary part on real-only data.")
+        
+        if constant_real is not None:
+            array[..., start_idx:end_idx+1] += constant_real
+        
+        elif constant is not None:
+            array[..., start_idx:end_idx+1] += constant
+
+    result = NMRData(array, copy_from=data)
+
 
     result.processing_history.append(
         {
             'Function': "Add constant",
-            'constant': constant
+            'start': start,
+            'end': end,
+            'constant': constant,
+            'constant_real': constant_real,
+            'constant_imaginary': constant_imaginary,
         }
     )
 
@@ -757,23 +866,101 @@ ADD = add_constant
 
 def multiply_constant(
     data: NMRData,
-    constant: float,
+    *,
+    start: str | int = None,
+    end: str | int = None,
+    constant: float = None,
+    constant_real: float = None,
+    constant_imaginary: float = None,
+    # Alias
+    r: float = None,
+    i: float = None,
+    c: float = None,
+    x1: str | int = None,
+    xn: str | int = None,
 ) -> NMRData:
     """
     Multiply a constant with the NMRData.
 
     Args:
-        data (NMRData): The data to multiply a constant by.
+        data (NMRData): Input data.
+        start (str or int, optional): Start point or coordinate ("5.5 ppm", "1234 pts", etc.).
+        end (str or int, optional): End point or coordinate.
+        constant (float): Real value to multiply both real and imaginary parts of data.
+        constant_real (float): Real value to multiply real part only.
+        constant_imaginary (float): Real value to multiply imaginary part only.
+
+    Aliases:
+        r: Alias for constant_real.
+        i: Alias for constant_imaginary.
+        c: Alias for constant.
+        x1: Alias for start.
+        xn: Alias for end.
 
     Returns:
-        NMRData: Multiplied data.
+        NMRData: Adjusted data.
     """
-    result = data * constant
+    # Handle aliases
+    if r is not None: constant_real = r
+    if i is not None: constant_imaginary = i
+    if c is not None: constant = c
+    if x1 is not None: start = x1
+    if xn is not None: end = xn
+    
+    
+    if constant is None and constant_real is None and constant_imaginary is None:
+        raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
+    
+    
+    array = data.copy()
+
+    npoints = array.shape[-1]
+    
+    
+    # Determine start and end indices
+    start_idx = _convert_to_index(data, start, npoints, default=0)
+    end_idx = _convert_to_index(data, end, npoints, default=npoints-1)
+    
+    
+    # Ensure valid index order
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+
+
+    slice_obj = (slice(None),) * (array.ndim - 1) + (slice(start_idx, end_idx + 1),)
+
+    if np.iscomplexobj(array):
+        # Complex data
+        if constant is not None:
+            array[slice_obj] *= constant
+        
+        if constant_real is not None:
+            array.real[slice_obj] *= constant_real
+        
+        if constant_imaginary is not None:
+            array.imag[slice_obj] *= constant_imaginary
+    else:
+        # Real-only data
+        if constant_imaginary is not None:
+            raise ValueError("Cannot multiply imaginary part on real-only data.")
+        
+        if constant_real is not None:
+            array[..., start_idx:end_idx+1] *= constant_real
+        
+        elif constant is not None:
+            array[..., start_idx:end_idx+1] *= constant
+
+    result = NMRData(array, copy_from=data)
+
 
     result.processing_history.append(
         {
-            'Function': "Multiplied by constant",
-            'constant': constant
+            'Function': "Multiply constant",
+            'start': start,
+            'end': end,
+            'constant': constant,
+            'constant_real': constant_real,
+            'constant_imaginary': constant_imaginary,
         }
     )
 
@@ -786,6 +973,8 @@ MULT = multiply_constant
 def set_to_constant(
     data: NMRData,
     *,
+    start: str | int = None,
+    end: str | int = None,
     constant: float = 0.0,
     constant_real: float = 0.0,
     constant_imaginary: float = 0.0,
@@ -797,22 +986,79 @@ def set_to_constant(
     xn: str | int = None,
 ) -> NMRData:
     """
-    Set range in NMRData to a constant.
+    Set a range in the last dimension of NMRData to a constant.
 
     Args:
         data (NMRData): Input data.
+        start (str or int, optional): Start point or coordinate ("5.5 ppm", "1234 pts", etc.).
+        end (str or int, optional): End point or coordinate.
+        constant (float): Real value to set (applies to real part if complex).
+        constant_real (float): Real part to set (for complex data).
+        constant_imaginary (float): Imaginary part to set (for complex data).
+
+    Aliases:
+        r: Alias for constant_real.
+        i: Alias for constant_imaginary.
+        c: Alias for constant.
+        x1: Alias for start.
+        xn: Alias for end.
 
     Returns:
         NMRData: Adjusted data.
     """
-    
-    raise NotImplementedError
-    
-    result = data
+    # Handle aliases
+    if r is not None: constant_real = r
+    if i is not None: constant_imaginary = i
+    if c is not None: constant = c
+    if x1 is not None: start = x1
+    if xn is not None: end = xn
+
+    if constant is None and constant_real is None and constant_imaginary is None:
+        raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
+
+    array = data.copy()
+    npoints = array.shape[-1]
+
+    # Determine start and end indices
+    start_idx = _convert_to_index(data, start, npoints, default=0)
+    end_idx = _convert_to_index(data, end, npoints, default=npoints-1)
+
+    # Ensure valid index order
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+
+    slice_obj = (slice(None),) * (array.ndim - 1) + (slice(start_idx, end_idx + 1),)
+
+    if np.iscomplexobj(array):
+        if constant is not None:
+            array[slice_obj] = constant
+        
+        if constant_real is not None:
+            array.real[slice_obj] = constant_real
+        
+        if constant_imaginary is not None:
+            array.imag[slice_obj] = constant_imaginary
+    else:
+        # Real-only data
+        if constant_imaginary is not None:
+            raise ValueError("Cannot set imaginary part on real-only data.")
+        
+        if constant_real is not None:
+            array[..., start_idx:end_idx+1] = constant_real
+        
+        elif constant is not None:
+            array[..., start_idx:end_idx+1] = constant
+
+    result = NMRData(array, copy_from=data)
 
     result.processing_history.append(
         {
             'Function': "Set to constant",
+            'start': start,
+            'end': end,
+            'constant': constant,
+            'constant_real': constant_real,
+            'constant_imaginary': constant_imaginary,
         }
     )
 
