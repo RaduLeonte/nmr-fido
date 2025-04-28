@@ -1,9 +1,11 @@
 from __future__ import annotations
+from typing import Callable
 import numpy as np
 import copy
 
+
 class NMRData(np.ndarray):
-    _custom_attrs = ['labels', 'scales', 'units', 'metadata', 'processing_history']
+    _custom_attrs = ['labels', 'scales', 'units', 'axis_info', 'metadata', 'processing_history']
     
     def __new__(
         cls,
@@ -11,6 +13,7 @@ class NMRData(np.ndarray):
         labels: list[str] = None,
         scales: list[np.ndarray] = None,
         units: list[str] = None,
+        axis_info: list[dict] = None,
         metadata: dict = None,
         processing_history: list[dict] = None,
         copy_from: NMRData = None,
@@ -22,6 +25,7 @@ class NMRData(np.ndarray):
             'labels': labels,
             'scales': scales,
             'units': units,
+            'axis_info': axis_info,
             'metadata': metadata,
             'processing_history': processing_history
         }
@@ -50,6 +54,8 @@ class NMRData(np.ndarray):
             return [np.arange(size) for size in input_array.shape]
         elif attr == 'units':
             return ["pts"] * input_array.ndim
+        elif attr == 'axis_info':
+            return [{} for _ in range(input_array.ndim)]
         elif attr == 'metadata':
             return {}
         elif attr == 'processing_history':
@@ -84,7 +90,7 @@ class NMRData(np.ndarray):
                             new_scales.append(self.scales[i][s])
                     setattr(result, 'scales', new_scales)
                 
-                case 'labels' | 'units':
+                case 'labels' | 'units' | 'axis_info':
                     setattr(result, attr, [getattr(self, attr)[i] for i in surviving_dims])
                 
                 case _:
@@ -118,25 +124,82 @@ class NMRData(np.ndarray):
     __repr__ = __str__
     
     
-    def transpose(self, *axes) -> NMRData:
-        # Transpose data
-        result = super().transpose(*axes)
-        
-        # Reorder axes
-        if axes:
-            axes = axes[0]
-        else:
-            axes = reversed(range(self.ndim))
-
-        # Update relevant attributes
+    def _update_from(self, other: NMRData):
+        """Helper to update self's contents from another NMRData object."""
+        self.resize(other.shape, refcheck=False)
+        np.copyto(self, other)
         for attr in self._custom_attrs:
-            match attr:
-                case 'scales' | 'labels' | 'units':
-                    # Reorder attribute
-                    setattr(result, attr, [getattr(self, attr)[ax] for ax in axes])
+            setattr(self, attr, copy.deepcopy(getattr(other, attr)))
+            
+    
+    @classmethod
+    def _add_processing_method(cls, func: Callable, method_name: str = None):
+        """
+        Dynamically add a processing method to NMRData.
 
-                case _:
-                    # Deep copy attribute
-                    setattr(result, attr, copy.deepcopy(getattr(self, attr)))
+        Args:
+            func (Callable): The processing function (e.g., zero_fill)
+            method_name (str): Optional method name (default = func.__name__)
+        """
+        name = method_name or func.__name__
 
-        return result
+        def method(self, overwrite: bool = False, **kwargs):
+            result = func(self, **kwargs)
+            if overwrite:
+                self._update_from(result)
+                return self
+            else:
+                return result
+
+        method.__name__ = name
+        setattr(cls, name, method)
+        
+    
+    def scale_to_ppm(self, target_dim: int = -1) -> NMRData:
+        """
+        Convert the scale of the target dimension to ppm using axis_info.
+
+        Args:
+            target_dim (int): Which dimension to convert. Defaults to last dimension (-1).
+
+        Returns:
+            NMRData: The updated object (self).
+        """
+        # Handle negative indices
+        dim = target_dim if target_dim >= 0 else self.ndim + target_dim
+
+        if not hasattr(self, 'axis_info') or len(self.axis_info) <= dim:
+            raise ValueError(f"No axis_info available for dimension {dim}.")
+
+        info = self.axis_info[dim]
+
+        try:
+            sw = info["SW"]   # Sweep Width (Hz)
+            sf = info["SF"]   # Spectrometer Frequency (MHz)
+            offset = info.get("OFFSET", 0.0)  # Reference ppm, default 0
+        except KeyError as e:
+            raise ValueError(f"Missing required key in axis_info[{dim}]: {e}")
+
+        npoints = self.shape[dim]
+
+        # Calculate ppm scale
+        ppm_scale = np.linspace(
+            offset + (sw / (2 * sf)),
+            offset - (sw / (2 * sf)),
+            npoints,
+            endpoint=False
+        )
+
+        self.scales[dim] = ppm_scale
+        self.units[dim] = "ppm"
+
+        return self
+
+
+    
+from nmr_fido.core import processing
+
+for name in dir(processing):
+    attr = getattr(processing, name)
+    if callable(attr) and not name.startswith("_"):
+        NMRData._add_processing_method(attr)
