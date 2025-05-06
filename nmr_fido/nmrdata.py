@@ -5,6 +5,14 @@ import copy
 
 
 class NMRData(np.ndarray):
+    # Declare so IDE can autocomplete
+    labels: list[str]
+    scales: list[np.ndarray]
+    units: list[str]
+    axis_info: list[dict]
+    metadata: dict
+    processing_history: list[dict]
+    
     _custom_attrs = ['labels', 'scales', 'units', 'axis_info', 'metadata', 'processing_history']
     
     def __new__(
@@ -18,6 +26,44 @@ class NMRData(np.ndarray):
         processing_history: list[dict] = None,
         copy_from: NMRData = None,
     ):
+        """
+        Create a new NMRData object, a subclass of numpy.ndarray with NMR specific metadata.
+
+        Parameters:
+            input_array (np.ndarray):
+                The raw data array. This must be a numpy compatible array (e.g., from np.zeros or np.ones).
+
+            labels (list of str, optional):
+                Human-readable names for each axis (e.g., ['15N', '13C', '1H']).
+
+            scales (list of np.ndarray, optional):
+                Coordinate scales for each axis (e.g., ppm or time values). Each entry must match the size of the corresponding dimension.
+
+            units (list of str, optional):
+                Unit strings for each axis (e.g., 'ppm', 'Hz', 'pts').
+
+            axis_info (list of dict, optional):
+                Metadata for each axis (e.g., {'SW': 8000, 'SF': 600, 'OFFSET': 4.7}).
+
+            metadata (dict, optional):
+                Global metadata for the dataset, such as acquisition parameters.
+
+            processing_history (list of dict, optional):
+                A list of dictionaries describing each processing step applied to the data.
+
+            copy_from (NMRData, optional):
+                An existing NMRData object to inherit all metadata from (except the data array).
+
+        Returns:
+            NMRData:
+                A NumPy ndarray with enhanced metadata support for NMR processing and visualization.
+
+        NOTE:
+            The axis ordering follows the convention: the **last axis is the fastest-varying (X), and the first is the slowest (Z)**.
+            That means: **dimension order is Z (outermost), Y (middle), X (innermost)**.
+            So, when specifying `labels`, `scales`, or `units`, ensure that:
+                labels = ['Z-axis', 'Y-axis', 'X-axis'] — NOT ['X', 'Y', 'Z']
+        """
         obj: np.ndarray = np.asarray(input_array).view(cls)
         
         
@@ -172,13 +218,14 @@ class NMRData(np.ndarray):
             raise ValueError(f"No axis_info available for dimension {dim}.")
 
         info = self.axis_info[dim]
+        
+        if not all(k in info for k in ("SW", "SF")):
+            return self
 
-        try:
-            sw = info["SW"]   # Sweep Width (Hz)
-            sf = info["SF"]   # Spectrometer Frequency (MHz)
-            offset = info.get("OFFSET", 0.0)  # Reference ppm, default 0
-        except KeyError as e:
-            raise ValueError(f"Missing required key in axis_info[{dim}]: {e}")
+        sw = info["SW"]   # Sweep Width (Hz)
+        sf = info["SF"]   # Spectrometer Frequency (MHz)
+        offset = info.get("OFFSET", 0.0)  # Reference ppm, default 0
+
 
         npoints = self.shape[dim]
 

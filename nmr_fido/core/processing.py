@@ -30,6 +30,8 @@ def solvent_filter(
 
 # NMRPipe alias
 SOL = solvent_filter
+SOL.__doc__ = solvent_filter.__doc__
+SOL.__name__ = "SOL"
 
 
 def linear_prediction(
@@ -73,6 +75,8 @@ def linear_prediction(
 
 # NMRPipe alias
 LP = linear_prediction
+LP.__doc__ = linear_prediction.__doc__
+LP.__name__ = "LP"
 
 
 def sine_bell_window(
@@ -201,6 +205,8 @@ def sine_bell_window(
 
 # NMRPipe alias
 SP = sine_bell_window
+SP.__doc__ = sine_bell_window.__doc__
+SP.__name__ = "SP"
 
 
 def zero_fill(
@@ -296,6 +302,8 @@ def zero_fill(
 
 # NMRPipe alias
 ZF = zero_fill
+ZF.__doc__ = zero_fill.__doc__
+ZF.__name__ = "ZF"
 
 
 def fourier_transform(
@@ -400,6 +408,8 @@ def fourier_transform(
 
 # NMRPipe alias
 FT = fourier_transform
+FT.__doc__ = fourier_transform.__doc__
+FT.__name__ = "FT"
 
 
 def hilbert_transform(
@@ -483,6 +493,8 @@ def hilbert_transform(
 
 # NMRPipe alias
 HT = hilbert_transform
+HT.__doc__ = hilbert_transform.__doc__
+HT.__name__ = "HT"
 
 
 def phase(
@@ -588,7 +600,8 @@ def phase(
 
 # NMRPipe alias
 PS = phase
-
+PS.__doc__ = phase.__doc__
+PS.__name__ = "PS"
 
 
 def extract_region(
@@ -661,6 +674,8 @@ def extract_region(
 
 # NMRPipe alias
 EXT = extract_region
+EXT.__doc__ = extract_region.__doc__
+EXT.__name__ = "EXT"
 
 
 def polynomial_baseline_correction(
@@ -709,6 +724,8 @@ def polynomial_baseline_correction(
 
 # NMRPipe alias
 POLY = polynomial_baseline_correction
+POLY.__doc__ = polynomial_baseline_correction.__doc__
+POLY.__name__ = "POLY"
 
 
 def transpose(
@@ -755,7 +772,11 @@ def transpose(
 
 # NMRPipe alias
 TP = transpose
+TP.__doc__ = transpose.__doc__
+TP.__name__ = "TP"
 ZTP = transpose
+ZTP.__doc__ = transpose.__doc__
+ZTP.__name__ = "ZTP"
 
 
 def add_constant(
@@ -862,6 +883,8 @@ def add_constant(
 
 # NMRPipe alias
 ADD = add_constant
+ADD.__doc__ = add_constant.__doc__
+ADD.__name__ = "ADD"
 
 
 def multiply_constant(
@@ -968,6 +991,8 @@ def multiply_constant(
 
 # NMRPipe alias
 MULT = multiply_constant
+MULT.__doc__ = multiply_constant.__doc__
+MULT.__name__ = "MULT"
 
 
 def set_to_constant(
@@ -1066,3 +1091,6 @@ def set_to_constant(
 
 # NMRPipe alias
 SET = set_to_constant
+SET.__doc__ = set_to_constant.__doc__
+SET.__name__ = "SET"
+
