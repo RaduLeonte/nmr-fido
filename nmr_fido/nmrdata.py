@@ -5,6 +5,8 @@ import copy
 import inspect
 import functools
 
+from nmr_fido.utils import get_ppm_scale
+
 
 class NMRData(np.ndarray):
     # Declare so IDE can autocomplete
@@ -253,20 +255,9 @@ class NMRData(np.ndarray):
         obs = info["OBS"] # Observer frequency (spectrometer freq.) [MHz]
 
         npoints = self.shape[dim]
-        points = np.arange(npoints)
-        
-        # Calculate the frequency (Hz) of the first point on the spectrum
-        # Formula: origin + (sweep_width / 2) - (sweep_width / npoints)
-        # This adjusts for the fact that the first point is slightly below the upper edge
-        o1_Hz = ori + sw / 2 - sw / npoints
-        
-        # Generate Hz scale: symmetric around origin, decreasing from high to low frequency
-        # This matches how FFT output is ordered in most NMR datasets (left = high freq)
-        hz_scale = o1_Hz - sw * (points / npoints - 0.5)
-        
         
         # Calculate ppm scale
-        ppm_scale = hz_scale / obs
+        ppm_scale = get_ppm_scale(npoints, sw, ori, obs)
         
 
         self.scales[dim] = ppm_scale

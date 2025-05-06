@@ -2,7 +2,7 @@ import time
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
-from nmr_fido.utils import _convert_to_index
+from nmr_fido.utils import _convert_to_index, get_ppm_scale
 from scipy.signal import hilbert
 
 
@@ -656,6 +656,7 @@ def extract_region(
     right_half: bool = False,
     middle_half: bool = False,
     power_of_two: bool = False,
+    adjust_spectral_width: bool = True,
     multiple_of: int = None,
     # Aliases
     #time: bool = None,
@@ -663,7 +664,7 @@ def extract_region(
     right: bool = None,
     mid: bool = None,
     pow2: bool = None,
-    #sw: bool = None,
+    sw: bool = None,
     round: int = None,
     x1: str = None,
     xn: str = None,
@@ -671,47 +672,137 @@ def extract_region(
     yn: str = None,
 ) -> NMRData:
     """
-    Desc.
+    Extract a region from the NMRData array, optionally adjusting spectral calibration.
 
     Args:
-        data (NMRData): The data to extract region from.
+        data (NMRData): Input NMR dataset to extract from.
+        start (str | int, optional): Starting point along the last dimension. Accepts index or unit string (e.g. "5.5 ppm", "1000 pts").
+        end (str | int, optional): Ending point along the last dimension. Accepts index or unit string.
+        start_y (str | int, optional): Starting vector along second-to-last dimension (for 2D data).
+        end_y (str | int, optional): Ending vector along second-to-last dimension (for 2D data).
+        left_half (bool): Extract the left half of the x-dimension.
+        right_half (bool): Extract the right half of the x-dimension.
+        middle_half (bool): Extract the middle half of the x-dimension.
+        power_of_two (bool): Adjust extracted size to the nearest power of two.
+        adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata based on extracted region.
+        multiple_of (int, optional): Round the size to the nearest multiple of this value.
+        
+    Aliases:
+        left, right, mid: Aliases for left_half, right_half, middle_half.
+        pow2: Alias for power_of_two.
+        sw: Alias for adjust_spectral_width.
+        round: Alias for multiple_of.
+        x1, xn: Aliases for start and end.
+        y1, yn: Aliases for start_y and end_y.
+
 
     Returns:
-        NMRData: Desc.
+        NMRData: Extracted region of the input data, optionally with updated spectral calibration.
     """
+    start_time = time.perf_counter()
+    
     # Handle aliases
     if left is not None: left_half = left
     if right is not None: right_half = right
     if mid is not None: middle_half = mid
     if pow2 is not None: power_of_two = pow2
+    if sw is not None: adjust_spectral_width = sw
     if round is not None: multiple_of = round
     if x1 is not None: start = x1
     if xn is not None: end = xn
     if y1 is not None: start_y = y1
     if yn is not None: end_y = yn
     
-    array = data.copy()
-    npoints = array.shape[-1]
+    result = data.copy()
+    npoints = result.shape[-1]
+    nvectors = result.shape[-2] if result.ndim > 1 else 1
     
-    # Determine start and end indices
-    start_idx = _convert_to_index(data, start, npoints, default=0)
-    end_idx = _convert_to_index(data, end, npoints, default=npoints-1)
+    if left_half:
+        start, end = 0, npoints // 2 - 1
+    elif right_half:
+        start, end = npoints // 2, npoints - 1
+    elif middle_half:
+        start = npoints // 4
+        end = start + npoints // 2 - 1
+        
+    if start is None: start = 0
+    if end is None: end = npoints - 1
+    if start_y is None and result.ndim > 1: start_y = 0
+    if end_y is None and result.ndim > 1: end_y = nvectors - 1
+    
+    # Convert coordinate-like strings to indices
+    start_idx = _convert_to_index(result, start, npoints, default=0)
+    end_idx = _convert_to_index(result, end, npoints, default=npoints - 1)
+    if result.ndim > 1:
+        start_y_idx = _convert_to_index(result, start_y, nvectors, default=0, dim=-2)
+        end_y_idx = _convert_to_index(result, end_y, nvectors, default=nvectors - 1, dim=-2)
+    else:
+        start_y_idx = end_y_idx = 0
 
-    # Ensure valid index order
+    # Ensure proper ordering
     if start_idx > end_idx:
         start_idx, end_idx = end_idx, start_idx
+    if start_y_idx > end_y_idx:
+        start_y_idx, end_y_idx = end_y_idx, start_y_idx
 
-    raise NotImplementedError
+    # Calculate slice sizes
+    x_size = end_idx - start_idx + 1
+    y_size = end_y_idx - start_y_idx + 1
     
-    result = data
+    # Adjust size if rounding requested
+    if power_of_two:
+        new_x_size = 2 ** int(np.floor(np.log2(x_size)))
+        end_idx = start_idx + new_x_size - 1
+    elif multiple_of:
+        new_x_size = x_size - (x_size % multiple_of)
+        end_idx = start_idx + new_x_size - 1
+        
+    # Slice the data
+    if result.ndim > 1:
+        sliced = result[start_y_idx:end_y_idx+1, start_idx:end_idx+1]
+    else:
+        sliced = result[start_idx:end_idx+1]
+        
+    new_data = NMRData(sliced, scales=sliced.scales, copy_from=result)
+    
+    if adjust_spectral_width:
+        dim = -1 
+        full_size = npoints
+        new_size = sliced.shape[dim]
 
-    result.processing_history.append(
-        {
-            'Function': "Extract region",
-        }
-    )
+        # Adjust SW, ORI, and OBS based on ppm limits
+        sw, ori, obs = (data.axis_info[dim][k] for k in ("SW", "ORI", "OBS"))
+        
+        # Recalculate ppm scale and determine new max ppm based on trimmed size
+        ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
+        new_ppm_scale = ppm_scale[start_idx:end_idx+1]
+        ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
 
-    return result
+        # Create new axis info dictionary
+        new_axis_info = result.axis_info[dim].copy()
+        new_axis_info['SW'] = sw * (new_size / full_size)
+        new_axis_info['ORI'] = obs * ppm_max  # ORI = center frequency in Hz = OBS * ppm
+        new_axis_info['OBS'] = obs  # unchanged
+
+        new_data.axis_info[dim] = new_axis_info
+        
+        #new_data.scale_to_ppm()
+
+    elapsed = time.perf_counter() - start_time
+    new_data.processing_history.append({
+        'Function': "Extract Region",
+        'start_x': start_idx,
+        'end_x': end_idx,
+        'start_y': start_y_idx,
+        'end_y': end_y_idx,
+        'shape_before': result.shape,
+        'shape_after': sliced.shape,
+        'adjusted_sw': adjust_spectral_width,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return new_data
 
 # NMRPipe alias
 EXT = extract_region
