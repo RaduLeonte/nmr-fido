@@ -30,13 +30,14 @@ def solvent_filter(
 
 # NMRPipe alias
 SOL = solvent_filter
-SOL.__doc__ = solvent_filter.__doc__
-SOL.__name__ = "SOL"
+SOL.__doc__ = solvent_filter.__doc__  # Auto-generated
+SOL.__name__ = "SOL"  # Auto-generated
+
 
 
 def linear_prediction(
     data: NMRData,
-    #*,
+    *,
     # Aliases
     pred: int = None,
     x1: int = None,
@@ -75,8 +76,9 @@ def linear_prediction(
 
 # NMRPipe alias
 LP = linear_prediction
-LP.__doc__ = linear_prediction.__doc__
-LP.__name__ = "LP"
+LP.__doc__ = linear_prediction.__doc__  # Auto-generated
+LP.__name__ = "LP"  # Auto-generated
+
 
 
 def sine_bell_window(
@@ -205,8 +207,9 @@ def sine_bell_window(
 
 # NMRPipe alias
 SP = sine_bell_window
-SP.__doc__ = sine_bell_window.__doc__
-SP.__name__ = "SP"
+SP.__doc__ = sine_bell_window.__doc__  # Auto-generated
+SP.__name__ = "SP"  # Auto-generated
+
 
 
 def zero_fill(
@@ -302,8 +305,9 @@ def zero_fill(
 
 # NMRPipe alias
 ZF = zero_fill
-ZF.__doc__ = zero_fill.__doc__
-ZF.__name__ = "ZF"
+ZF.__doc__ = zero_fill.__doc__  # Auto-generated
+ZF.__name__ = "ZF"  # Auto-generated
+
 
 
 def fourier_transform(
@@ -333,7 +337,7 @@ def fourier_transform(
         negate_imaginaries (bool): Multiply imaginary parts by -1 before FFT.
         sign_alteration (bool): Apply sign alternation to input (multiply every other point by -1).
         bruk (bool): If True, sets real_only and sign_alteration to True automatically (Bruker-style processing).
-        norm (str): Normalization mode for the FFT:
+        norm (str): Normalization mode for the FFT
             - "backward" (default): No scaling on forward FFT, 1/N scaling on inverse FFT (standard NMR convention).
             - "forward": 1/N scaling on forward FFT, no scaling on inverse FFT (rare, signal processing style).
             - "ortho": √N scaling on both forward and inverse FFT (symmetric, orthonormal transform).
@@ -408,8 +412,9 @@ def fourier_transform(
 
 # NMRPipe alias
 FT = fourier_transform
-FT.__doc__ = fourier_transform.__doc__
-FT.__name__ = "FT"
+FT.__doc__ = fourier_transform.__doc__  # Auto-generated
+FT.__name__ = "FT"  # Auto-generated
+
 
 
 def hilbert_transform(
@@ -493,8 +498,9 @@ def hilbert_transform(
 
 # NMRPipe alias
 HT = hilbert_transform
-HT.__doc__ = hilbert_transform.__doc__
-HT.__name__ = "HT"
+HT.__doc__ = hilbert_transform.__doc__  # Auto-generated
+HT.__name__ = "HT"  # Auto-generated
+
 
 
 def phase(
@@ -600,8 +606,9 @@ def phase(
 
 # NMRPipe alias
 PS = phase
-PS.__doc__ = phase.__doc__
-PS.__name__ = "PS"
+PS.__doc__ = phase.__doc__  # Auto-generated
+PS.__name__ = "PS"  # Auto-generated
+
 
 
 def extract_region(
@@ -674,8 +681,9 @@ def extract_region(
 
 # NMRPipe alias
 EXT = extract_region
-EXT.__doc__ = extract_region.__doc__
-EXT.__name__ = "EXT"
+EXT.__doc__ = extract_region.__doc__  # Auto-generated
+EXT.__name__ = "EXT"  # Auto-generated
+
 
 
 def polynomial_baseline_correction(
@@ -724,8 +732,9 @@ def polynomial_baseline_correction(
 
 # NMRPipe alias
 POLY = polynomial_baseline_correction
-POLY.__doc__ = polynomial_baseline_correction.__doc__
-POLY.__name__ = "POLY"
+POLY.__doc__ = polynomial_baseline_correction.__doc__  # Auto-generated
+POLY.__name__ = "POLY"  # Auto-generated
+
 
 
 def transpose(
@@ -744,12 +753,13 @@ def transpose(
     Returns:
         NMRData: Transposed data.
     """
-    result = super(NMRData, data).transpose(*axes)
 
     if axes:
         axes = axes[0]
     else:
         axes = reversed(range(data.ndim))
+    
+    result = super(NMRData, data).transpose(*axes)
 
     for attr in data._custom_attrs:
         match attr:
@@ -772,11 +782,12 @@ def transpose(
 
 # NMRPipe alias
 TP = transpose
-TP.__doc__ = transpose.__doc__
-TP.__name__ = "TP"
+TP.__doc__ = transpose.__doc__  # Auto-generated
+TP.__name__ = "TP"  # Auto-generated
+
 ZTP = transpose
-ZTP.__doc__ = transpose.__doc__
-ZTP.__name__ = "ZTP"
+ZTP.__doc__ = transpose.__doc__  # Auto-generated
+ZTP.__name__ = "ZTP"  # Auto-generated
 
 
 def add_constant(
@@ -883,8 +894,8 @@ def add_constant(
 
 # NMRPipe alias
 ADD = add_constant
-ADD.__doc__ = add_constant.__doc__
-ADD.__name__ = "ADD"
+ADD.__doc__ = add_constant.__doc__  # Auto-generated
+ADD.__name__ = "ADD"  # Auto-generated
 
 
 def multiply_constant(
@@ -991,8 +1002,8 @@ def multiply_constant(
 
 # NMRPipe alias
 MULT = multiply_constant
-MULT.__doc__ = multiply_constant.__doc__
-MULT.__name__ = "MULT"
+MULT.__doc__ = multiply_constant.__doc__  # Auto-generated
+MULT.__name__ = "MULT"  # Auto-generated
 
 
 def set_to_constant(
@@ -1091,6 +1102,5 @@ def set_to_constant(
 
 # NMRPipe alias
 SET = set_to_constant
-SET.__doc__ = set_to_constant.__doc__
-SET.__name__ = "SET"
-
+SET.__doc__ = set_to_constant.__doc__  # Auto-generated
+SET.__name__ = "SET"  # Auto-generated

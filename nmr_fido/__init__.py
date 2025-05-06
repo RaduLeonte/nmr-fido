@@ -1,5 +1,7 @@
 from .nmrdata import NMRData
 from .core.processing import (
+    solvent_filter, SOL,
+    linear_prediction, LP,
     sine_bell_window, SP,
     zero_fill, ZF,
     fourier_transform, FT,
@@ -15,6 +17,8 @@ from .core.processing import (
 
 __all__ = [
     "NMRData",
+    "solvent_filter", "SOL",
+    "linear_prediction", "LP",
     "sine_bell_window", "SP",
     "zero_fill", "ZF",
     "fourier_transform", "FT",
