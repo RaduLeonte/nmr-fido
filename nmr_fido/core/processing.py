@@ -1,8 +1,21 @@
+import time
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
 from nmr_fido.utils import _convert_to_index
 from scipy.signal import hilbert
+
+
+def _format_elapsed_time(elapsed: float) -> str:
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    milliseconds = int((elapsed % 1) * 1000)
+    microseconds = int((elapsed % 1) * 1_000_000) % 1000
+
+    if minutes > 0:
+        return f"{minutes}m {seconds}s {milliseconds}ms {microseconds}µs"
+
+    return f"{seconds}s {milliseconds}ms {microseconds}µs"
 
 
 def solvent_filter(
@@ -127,6 +140,7 @@ def sine_bell_window(
     Returns:
         NMRData: Data after applying sine-bell apodization.
     """
+    start_time = time.perf_counter()
     
     # Handle argument aliases
     if off is not None: start_angle = off
@@ -187,7 +201,7 @@ def sine_bell_window(
     # Scale first point
     result[..., start-1] *= scale_factor_first_point
     
-    
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Apodization: Sine bell window",
@@ -199,7 +213,8 @@ def sine_bell_window(
             'scale_factor_first_point': scale_factor_first_point,
             'fill_outside_one': fill_outside_one,
             'invert_window': invert_window,
-            'clip_size': clip_size,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
     
@@ -240,6 +255,8 @@ def zero_fill(
     Returns:
         NMRData: Zero-filled NMRData.
     """
+    start_time = time.perf_counter()
+    
     # Handle argument aliases
     if zf is not None: factor = zf
     if pad is not None: add = pad
@@ -293,12 +310,15 @@ def zero_fill(
     result.scales = new_scales
     
     # Update processing history
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Zero filling",
             'original_last_dim': last_dim,
             'new_last_dim': new_last_dim,
-            'method': method
+            'method': method,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
     return result
@@ -351,6 +371,8 @@ def fourier_transform(
     Returns:
         NMRData: Fourier transformed data.
     """
+    start_time = time.perf_counter()
+    
     # Handle argument aliases
     if real is not None: real_only = real
     if inv is not None: inverse = inv
@@ -395,6 +417,7 @@ def fourier_transform(
     result.scale_to_ppm()
 
     # Update metadata
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': 'Complex fourier transform',
@@ -405,6 +428,8 @@ def fourier_transform(
             'bruk': bruk,
             'norm': norm,
             'input_real': np.isrealobj(data),
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -445,6 +470,8 @@ def hilbert_transform(
     Returns:
         NMRData: Hilbert transformed data.
     """
+    start_time = time.perf_counter()
+    
     # Handle argument aliases
     if ps90_180 is not None: mirror_image = ps90_180
     if zf is not None: temporary_zero_fill = zf
@@ -485,12 +512,15 @@ def hilbert_transform(
     result = NMRData(result_array, copy_from=data)
     
     # Update metadata
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': 'Hilbert transform',
             'mirror_image': mirror_image,
             'temporary_zero_fill': temporary_zero_fill,
             'size_time_domain': size_time_domain,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -549,6 +579,7 @@ def phase(
     Returns:
         NMRData: Data after applying phase correction.
     """
+    start_time = time.perf_counter()
     
     # Handle argument aliases
     if inv is not None: invert = inv
@@ -589,6 +620,7 @@ def phase(
     if temporary_zero_fill:
         result_array = result_array[..., :original_shape[-1]]
     
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Phase Correction",
@@ -599,6 +631,8 @@ def phase(
             'decay_constant': decay_constant,
             'reconstruct_imaginaries': reconstruct_imaginaries,
             'temporary_zero_fill': temporary_zero_fill,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
     
@@ -753,11 +787,13 @@ def transpose(
     Returns:
         NMRData: Transposed data.
     """
+    start_time = time.perf_counter()
 
     if axes:
         axes = axes[0]
     else:
-        axes = reversed(range(data.ndim))
+        axes = list(range(data.ndim))
+        axes.reverse()
     
     result = super(NMRData, data).transpose(*axes)
 
@@ -767,14 +803,18 @@ def transpose(
                 setattr(result, attr, [getattr(data, attr)[ax] for ax in axes])
             case _:
                 setattr(result, attr, copy.deepcopy(getattr(data, attr)))
+    
 
     # Record processing history
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Transpose",
             'axes': list(axes) if hasattr(axes, '__iter__') else [axes],
             'shape_before': data.shape,
             'shape_after': result.shape,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -826,6 +866,8 @@ def add_constant(
     Returns:
         NMRData: Adjusted data.
     """
+    start_time = time.perf_counter()
+    
     # Handle aliases
     if r is not None: constant_real = r
     if i is not None: constant_imaginary = i
@@ -879,6 +921,7 @@ def add_constant(
     result = NMRData(array, copy_from=data)
 
 
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Add constant",
@@ -887,6 +930,8 @@ def add_constant(
             'constant': constant,
             'constant_real': constant_real,
             'constant_imaginary': constant_imaginary,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -934,6 +979,8 @@ def multiply_constant(
     Returns:
         NMRData: Adjusted data.
     """
+    start_time = time.perf_counter()
+    
     # Handle aliases
     if r is not None: constant_real = r
     if i is not None: constant_imaginary = i
@@ -987,6 +1034,7 @@ def multiply_constant(
     result = NMRData(array, copy_from=data)
 
 
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Multiply constant",
@@ -995,6 +1043,8 @@ def multiply_constant(
             'constant': constant,
             'constant_real': constant_real,
             'constant_imaginary': constant_imaginary,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -1042,6 +1092,8 @@ def set_to_constant(
     Returns:
         NMRData: Adjusted data.
     """
+    start_time = time.perf_counter()
+    
     # Handle aliases
     if r is not None: constant_real = r
     if i is not None: constant_imaginary = i
@@ -1087,6 +1139,8 @@ def set_to_constant(
 
     result = NMRData(array, copy_from=data)
 
+
+    elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Set to constant",
@@ -1095,6 +1149,8 @@ def set_to_constant(
             'constant': constant,
             'constant_real': constant_real,
             'constant_imaginary': constant_imaginary,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
         }
     )
 
@@ -1104,3 +1160,40 @@ def set_to_constant(
 SET = set_to_constant
 SET.__doc__ = set_to_constant.__doc__  # Auto-generated
 SET.__name__ = "SET"  # Auto-generated
+
+
+def delete_imaginaries(data: NMRData) -> NMRData:
+    """
+    Discard the imaginary part of complex-valued NMRData.
+
+    Args:
+        data (NMRData): Complex NMRData.
+
+    Returns:
+        NMRData: Real-valued data.
+    """
+    start_time = time.perf_counter()
+
+    # Take the real part only
+    real_data = np.real(data).copy()
+
+    # Create new NMRData object with real data and preserved metadata
+    result = NMRData(real_data, copy_from=data)
+
+    # Record processing history
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append({
+        'Function': "Delete imaginary part",
+        'imag_removed': True,
+        'dtype_before': str(data.dtype),
+        'dtype_after': str(real_data.dtype),
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return result
+
+# NMRPipe alias
+DI = delete_imaginaries
+DI.__doc__ = delete_imaginaries.__doc__  # Auto-generated
+DI.__name__ = "DI"  # Auto-generated

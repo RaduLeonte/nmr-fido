@@ -88,11 +88,13 @@ class NMRData(np.ndarray):
 
         return obj
     
+    
     def __array_finalize__(self, obj):
         if obj is None:
             return
         for attr in self._custom_attrs:
             setattr(self, attr, getattr(obj, attr, None))
+    
     
     @staticmethod
     def _default_value(attr: str, input_array: np.ndarray):
@@ -110,6 +112,7 @@ class NMRData(np.ndarray):
             return []
         else:
             return None
+    
     
     def __getitem__(self, item) -> NMRData:
         result = super().__getitem__(item)
@@ -161,7 +164,6 @@ class NMRData(np.ndarray):
         return result
 
 
-
     def __str__(self) -> str:
         lines = [
             f"<NMRData shape={self.shape} dtype={self.dtype}>",
@@ -175,7 +177,7 @@ class NMRData(np.ndarray):
         ):
             for i, (label, scale, unit) in enumerate(zip(self.labels, self.scales, self.units)):
                 range_str = f"{scale[0]:.2f} to {scale[-1]:.2f}" if scale.size > 0 else "empty"
-                lines.append(f"  - {label}: Size={scale.size}, Range=({range_str}), Unit={unit}")
+                lines.append(f" {len(self.data.shape) - i} {label}: Size={scale.size}, Range=({range_str}), Unit={unit}")
 
         metadata_keys = list(self.metadata.keys()) if hasattr(self, 'metadata') and self.metadata else []
         lines.append(f"Metadata keys: {metadata_keys[:5]}")
@@ -224,7 +226,7 @@ class NMRData(np.ndarray):
             pass  # fallback if signature injection fails
         
         setattr(cls, name, method)
-        
+    
     
     def scale_to_ppm(self, target_dim: int = -1) -> NMRData:
         """
@@ -236,7 +238,6 @@ class NMRData(np.ndarray):
         Returns:
             NMRData: The updated object (self).
         """
-        # Handle negative indices
         dim = target_dim if target_dim >= 0 else self.ndim + target_dim
 
         if not hasattr(self, 'axis_info') or len(self.axis_info) <= dim:
@@ -244,23 +245,29 @@ class NMRData(np.ndarray):
 
         info = self.axis_info[dim]
         
-        if not all(k in info for k in ("SW", "SF")):
+        if not all(k in info for k in ("SW", "ORI", "OBS")):
             return self
 
-        sw = info["SW"]   # Sweep Width (Hz)
-        sf = info["SF"]   # Spectrometer Frequency (MHz)
-        offset = info.get("OFFSET", 0.0)  # Reference ppm, default 0
-
+        sw = info["SW"] # Sweep width [Hz]
+        ori = info["ORI"] # Origin freq (middle of spectrum) [Hz]
+        obs = info["OBS"] # Observer frequency (spectrometer freq.) [MHz]
 
         npoints = self.shape[dim]
-
+        points = np.arange(npoints)
+        
+        # Calculate the frequency (Hz) of the first point on the spectrum
+        # Formula: origin + (sweep_width / 2) - (sweep_width / npoints)
+        # This adjusts for the fact that the first point is slightly below the upper edge
+        o1_Hz = ori + sw / 2 - sw / npoints
+        
+        # Generate Hz scale: symmetric around origin, decreasing from high to low frequency
+        # This matches how FFT output is ordered in most NMR datasets (left = high freq)
+        hz_scale = o1_Hz - sw * (points / npoints - 0.5)
+        
+        
         # Calculate ppm scale
-        ppm_scale = np.linspace(
-            offset + (sw / (2 * sf)),
-            offset - (sw / (2 * sf)),
-            npoints,
-            endpoint=False
-        )
+        ppm_scale = hz_scale / obs
+        
 
         self.scales[dim] = ppm_scale
         self.units[dim] = "ppm"
@@ -697,6 +704,24 @@ class NMRData(np.ndarray):
             xn: Alias for end.
         Returns:
             NMRData: Adjusted data.
+        """
+        ...
+    def delete_imaginaries(self, ) -> NMRData:
+        """
+        Discard the imaginary part of complex-valued NMRData.
+        Args:
+            data (NMRData): Complex NMRData.
+        Returns:
+            NMRData: Real-valued data.
+        """
+        ...
+    def DI(self, ) -> NMRData:
+        """
+        Discard the imaginary part of complex-valued NMRData.
+        Args:
+            data (NMRData): Complex NMRData.
+        Returns:
+            NMRData: Real-valued data.
         """
         ...
     # endregion Processing stubs

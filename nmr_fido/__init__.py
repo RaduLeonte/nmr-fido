@@ -13,6 +13,7 @@ from .core.processing import (
     add_constant, ADD,
     multiply_constant, MULT,
     set_to_constant, SET,
+    delete_imaginaries, DI,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "add_constant", "ADD",
     "multiply_constant", "MULT",
     "set_to_constant", "SET",
+    "delete_imaginaries", "DI",
 ]

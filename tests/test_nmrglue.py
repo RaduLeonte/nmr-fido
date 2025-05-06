@@ -4,7 +4,10 @@ from pprint import pprint
 dic, data = ng.pipe.read("tests/test.fid")
 
 
-pprint(dic)
+keys = ["LABEL", "SW", "CAR", "OBS", "ORIG"]
+filt_dic = dic.copy()
+filt_dic = {k:v for k,v in filt_dic.items() if any(key in k for key in keys)}
+#pprint(filt_dic)
 print(data.shape)
 
 
@@ -12,6 +15,9 @@ print(data.shape)
 dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.98, pow=1, c=1.0)
 dic, data = ng.pipe_proc.zf(dic, data, auto=True)
 dic, data = ng.pipe_proc.ft(dic, data, auto=True)
+
+print(ng.pipe.make_uc(dic, data, dim=0).ppm_limits())
+
 dic, data = ng.pipe_proc.ps(dic, data, p0=-29.0, p1=0.0)
 dic, data = ng.pipe_proc.di(dic, data)
 
