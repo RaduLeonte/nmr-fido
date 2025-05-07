@@ -7,6 +7,14 @@ from scipy.signal import hilbert
 
 
 def _format_elapsed_time(elapsed: float) -> str:
+    """Format elapsed time to a human readable string for the NMRData processing history.
+
+    Args:
+        elapsed (float): Elapsed time in s
+
+    Returns:
+        str: Formatted elapsed time
+    """
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
     milliseconds = int((elapsed % 1) * 1000)
@@ -19,6 +27,16 @@ def _format_elapsed_time(elapsed: float) -> str:
 
 
 def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
+    """Convert interleaved data [re1, im1, re2, im2, ...] to complex data [re1 + 1j*im1, re2 + 1j*im2, ....]
+
+    Args:
+        data (NMRData): Input data.
+        dim (int, optional): Target dimension to convert. Defaults to -1.
+
+
+    Returns:
+        NMRData: Data after convertion.
+    """
     # Normalize the axis to handle negative indices
     dim = dim if dim >= 0 else data.ndim + dim
     
@@ -28,7 +46,6 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
         raise ValueError(
             f"The target axis {dim} length ({data.shape[dim]}) must be even, representing interleaved real/imaginary pairs."
         )
-
 
     new_shape[dim] //= 2
 
@@ -833,8 +850,7 @@ def extract_region(
         new_axis_dict['scale'] = new_ppm_scale
 
         new_data.axes[dim] = new_axis_dict
-        
-        #new_data.scale_to_ppm()
+
 
     elapsed = time.perf_counter() - start_time
     new_data.processing_history.append({

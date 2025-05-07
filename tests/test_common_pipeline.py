@@ -38,6 +38,7 @@ data = nf.NMRData(
 
 
 start_time = time.perf_counter()
+
 data = nf.SP(data, off=0.35, end=0.98, pow=1, c=1.0) # 2.344 ms
 data = nf.ZF(data, size=4096) # 1.516 ms
 data = nf.FT(data) # 30.795 ms
