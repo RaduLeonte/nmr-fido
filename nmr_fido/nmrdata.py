@@ -31,17 +31,9 @@ class NMRData(np.ndarray):
             input_array (np.ndarray):
                 The raw data array. This must be a numpy compatible array (e.g., from np.zeros or np.ones).
 
-            labels (list of str, optional):
-                Human-readable names for each axis (e.g., ['15N', '13C', '1H']).
-
-            scales (list of np.ndarray, optional):
-                Coordinate scales for each axis (e.g., ppm or time values). Each entry must match the size of the corresponding dimension.
-
-            units (list of str, optional):
-                Unit strings for each axis (e.g., 'ppm', 'Hz', 'pts').
-
-            axis_info (list of dict, optional):
-                Metadata for each axis (e.g., {'SW': 8000, 'SF': 600, 'OFFSET': 4.7}).
+            axes (list of dict, optional):
+                A list of dictionaries for each axis. Each dictionary can contain optional keys such as 'label', 'scale', 'units', 'SW', 'ORI', 'OBS'.
+                If a key is not provided, a default value will be generated. For instance, 'scale' will default to a range array of the appropriate size.
 
             metadata (dict, optional):
                 Global metadata for the dataset, such as acquisition parameters.
@@ -59,17 +51,12 @@ class NMRData(np.ndarray):
         NOTE:
             The axis ordering follows the convention: the **last axis is the fastest-varying (X), and the first is the slowest (Z)**.
             That means: **dimension order is Z (outermost), Y (middle), X (innermost)**.
-            So, when specifying `labels`, `scales`, or `units`, ensure that:
-                labels = ['Z-axis', 'Y-axis', 'X-axis'] — NOT ['X', 'Y', 'Z']
+            Each axis dictionary can include optional fields such as 'label', 'scale', 'units', 'SW', 'ORI', 'OBS'. Missing values will be populated with default values.
         """
         obj: np.ndarray = np.asarray(input_array).view(cls)
         
-        
         init_args = {
-            'labels': labels,
-            'scales': scales,
-            'units': units,
-            'axis_info': axis_info,
+            'axes': axes,
             'metadata': metadata,
             'processing_history': processing_history
         }
@@ -82,32 +69,42 @@ class NMRData(np.ndarray):
             else:
                 setattr(obj, attr, cls._default_value(attr, input_array))
 
+        # Populate missing axis entries with defaults
+        if hasattr(obj, 'axes') and isinstance(obj.axes, list):
+            for i, axis in enumerate(obj.axes):
+                default_axis = cls._default_axis(i, input_array.shape[i])
+                for key, value in default_axis.items():
+                    axis.setdefault(key, value)
+
         return obj
+
     
     
     def __array_finalize__(self, obj):
-        if obj is None:
-            return
+        if obj is None: return
+        
         for attr in self._custom_attrs:
             setattr(self, attr, getattr(obj, attr, None))
     
     
     @staticmethod
     def _default_value(attr: str, input_array: np.ndarray):
-        if attr == 'labels':
-            return [f"Axis {i}" for i in range(input_array.ndim)]
-        elif attr == 'scales':
-            return [np.arange(size) for size in input_array.shape]
-        elif attr == 'units':
-            return ["pts"] * input_array.ndim
-        elif attr == 'axis_info':
-            return [{} for _ in range(input_array.ndim)]
+        if attr == 'axes':
+            return [NMRData._default_axis(i, size) for i, size in enumerate(input_array.shape)]
         elif attr == 'metadata':
             return {}
         elif attr == 'processing_history':
             return []
-        else:
-            return None
+        return None
+    
+    
+    @staticmethod
+    def _default_axis(index: int, size: int) -> dict:
+        return {
+            "label": f"Axis {index}",
+            "scale": np.arange(size),
+            "unit": "pts"
+        }
     
     
     def __getitem__(self, item) -> NMRData:
@@ -127,56 +124,62 @@ class NMRData(np.ndarray):
 
         surviving_dims = [i for i, s in enumerate(slicers) if not isinstance(s, int)]
 
+        # Update axes attribute
+        new_axes = []
+        for i, s in enumerate(slicers):
+            if i >= len(self.axes):
+                continue  # prevent IndexError
+            
+            axis_dict = self.axes[i]
+            
+            if isinstance(s, slice):
+                # Slice the scale data
+                new_scale = axis_dict['scale'][s]
+                new_axes.append({
+                    'label': axis_dict['label'],
+                    'scale': new_scale,
+                    'unit': axis_dict['unit']
+                })
+            
+            elif isinstance(s, int):
+                # Drop axis
+                pass
+            
+            else:
+                new_axes.append(axis_dict)
+
+        # Reorder axes based on surviving dimensions
+        result.axes = [new_axes[i] for i in surviving_dims if i < len(new_axes)]
+
+        # Copy other custom attributes
         for attr in self._custom_attrs:
-            value = getattr(self, attr, None)
-
-            match attr:
-                case 'scales':
-                    if value is not None and isinstance(value, list):
-                        new_scales = []
-                        for i, s in enumerate(slicers):
-                            if i >= len(value):
-                                continue  # prevent IndexError
-                            if isinstance(s, slice):
-                                new_scales.append(value[i][s])
-                            elif isinstance(s, int):
-                                pass  # axis removed
-                            else:
-                                new_scales.append(value[i])
-                        setattr(result, attr, new_scales)
-                    else:
-                        setattr(result, attr, copy.deepcopy(value))
-
-                case 'labels' | 'units' | 'axis_info':
-                    if isinstance(value, list):
-                        # Avoid IndexError by checking list length
-                        setattr(result, attr, [value[i] for i in surviving_dims if i < len(value)])
-                    else:
-                        setattr(result, attr, copy.deepcopy(value))
-
-                case _:
-                    setattr(result, attr, copy.deepcopy(value))
+            if attr != 'axes':
+                setattr(result, attr, copy.deepcopy(getattr(self, attr, None)))
 
         return result
 
 
     def __str__(self) -> str:
         lines = [
-            f"<NMRData shape={self.shape} dtype={self.dtype}>",
-            "Axes:"
+            f'<NMRData shape={self.shape} dtype={self.dtype}">',
+            "Data Preview:",
+            str(np.array(self)),
         ]
 
-        if (
-            hasattr(self, 'labels') and
-            hasattr(self, 'scales') and
-            hasattr(self, 'units')
-        ):
-            for i, (label, scale, unit) in enumerate(zip(self.labels, self.scales, self.units)):
-                range_str = f"{scale[0]:.2f} to {scale[-1]:.2f}" if scale.size > 0 else "empty"
-                lines.append(f" {len(self.data.shape) - i} {label}: Size={scale.size}, Range=({range_str}), Unit={unit}")
+        # Display axes information
+        if hasattr(self, 'axes') and isinstance(self.axes, list):
+            lines.append("Axes:")
+            for i, axis in enumerate(self.axes):
+                label = axis.get('label', f"Axis {i}")
+                scale = axis.get('scale', [])
+                size = len(scale)
+                unit = axis.get('unit', '')
+                range_str = f"{scale[0]:.2f}, {scale[-1]:.2f}" if len(scale) > 0 else "empty"
+                lines.append(f" {len(self.shape) - i} {label}: Size={size}, Range=[{range_str}], Unit={unit}")
 
-        metadata_keys = list(self.metadata.keys()) if hasattr(self, 'metadata') and self.metadata else []
-        lines.append(f"Metadata keys: {metadata_keys[:5]}")
+        # Display metadata keys
+        #metadata_keys = list(self.metadata.keys()) if hasattr(self, 'metadata') and self.metadata else []
+        #lines.append(f"Metadata keys: {metadata_keys[:5]}")
 
         return "\n".join(lines)
     
@@ -203,25 +206,24 @@ class NMRData(np.ndarray):
         """
         dim = target_dim if target_dim >= 0 else self.ndim + target_dim
 
-        if not hasattr(self, 'axis_info') or len(self.axis_info) <= dim:
+        if not hasattr(self, 'axes') or len(self.axes) <= dim:
             raise ValueError(f"No axis_info available for dimension {dim}.")
 
-        info = self.axis_info[dim]
+        axis_dict = self.axes[dim]
         
-        if not all(k in info for k in ("SW", "ORI", "OBS")):
+        if not all(k in axis_dict for k in ("SW", "ORI", "OBS")):
             return self
 
-        sw = info["SW"] # Sweep width [Hz]
-        ori = info["ORI"] # Origin freq (middle of spectrum) [Hz]
-        obs = info["OBS"] # Observer frequency (spectrometer freq.) [MHz]
+        sw = axis_dict["SW"] # Sweep width [Hz]
+        ori = axis_dict["ORI"] # Origin freq (middle of spectrum) [Hz]
+        obs = axis_dict["OBS"] # Observer frequency (spectrometer freq.) [MHz]
 
         npoints = self.shape[dim]
         
         # Calculate ppm scale
         ppm_scale = get_ppm_scale(npoints, sw, ori, obs)
-        
 
-        self.scales[dim] = ppm_scale
-        self.units[dim] = "ppm"
+        self.axes[dim]["scale"] = ppm_scale
+        self.axes[dim]["unit"] = "ppm"
 
         return self
