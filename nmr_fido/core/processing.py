@@ -26,7 +26,7 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
     new_shape = list(data.shape)
     if new_shape[dim] % 2 != 0:
         raise ValueError(
-            f"The target axis {dim} length must be even, representing interleaved real/imaginary pairs."
+            f"The target axis {dim} length ({data.shape[dim]}) must be even, representing interleaved real/imaginary pairs."
         )
 
 
@@ -40,11 +40,15 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
     slices_imag[dim] = slice(1, None, 2)  # Imaginary parts
 
     # Construct the complex array
-    complex_data = np.empty(new_shape, dtype=np.complex64)
+    complex_dtype = np.result_type(data, np.complex64)
+    complex_data = np.empty(new_shape, dtype=complex_dtype)
     complex_data.real = data[tuple(slices_real)]
     complex_data.imag = data[tuple(slices_imag)]
+    
+    result = NMRData(complex_data, copy_from=data)
+    result.axes[dim]["acqu_mode"] = "Complex"
 
-    return NMRData(complex_data, copy_from=data)
+    return result
 
 
 def solvent_filter(
@@ -295,7 +299,7 @@ def zero_fill(
     last_dim = original_shape[-1]
     
     
-    last_unit = data.units[-1]
+    last_unit = data.axes[-1]["unit"]
     if last_unit not in ("pts", None, "points"):
         raise ValueError(
             f"Cannot zero-fill: last dimension unit is '{last_unit}', expected 'pts' or None."
@@ -334,9 +338,7 @@ def zero_fill(
     result = NMRData(result_array, copy_from=data)
     
     # Update last scale with pts
-    new_scales = list(result.scales)
-    new_scales[-1] = np.arange(new_last_dim)
-    result.scales = new_scales
+    result.axes[-1]["scale"] = np.arange(new_last_dim)
     
     # Update processing history
     elapsed = time.perf_counter() - start_time
@@ -807,8 +809,8 @@ def extract_region(
         sliced = result[start_y_idx:end_y_idx+1, start_idx:end_idx+1]
     else:
         sliced = result[start_idx:end_idx+1]
-        
-    new_data = NMRData(sliced, scales=sliced.scales, copy_from=result)
+    
+    new_data = NMRData(sliced, copy_from=result)
     
     if adjust_spectral_width:
         dim = -1 
@@ -816,7 +818,7 @@ def extract_region(
         new_size = sliced.shape[dim]
 
         # Adjust SW, ORI, and OBS based on ppm limits
-        sw, ori, obs = (data.axis_info[dim][k] for k in ("SW", "ORI", "OBS"))
+        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
         
         # Recalculate ppm scale and determine new max ppm based on trimmed size
         ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
@@ -824,12 +826,13 @@ def extract_region(
         ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
 
         # Create new axis info dictionary
-        new_axis_info = result.axis_info[dim].copy()
-        new_axis_info['SW'] = sw * (new_size / full_size)
-        new_axis_info['ORI'] = obs * ppm_max  # ORI = center frequency in Hz = OBS * ppm
-        new_axis_info['OBS'] = obs  # unchanged
+        new_axis_dict = result.axes[dim].copy()
+        new_axis_dict['SW'] = sw * (new_size / full_size)
+        new_axis_dict['ORI'] = obs * ppm_max  # ORI = center frequency in Hz = OBS * ppm
+        new_axis_dict['OBS'] = obs  # unchanged
+        new_axis_dict['scale'] = new_ppm_scale
 
-        new_data.axis_info[dim] = new_axis_info
+        new_data.axes[dim] = new_axis_dict
         
         #new_data.scale_to_ppm()
 
@@ -942,28 +945,29 @@ def transpose(
     else:
         result = super(NMRData, data).transpose(*axes)
         
-        is_interleaved = False
-        
-        if is_interleaved:
-            result = _interleaved_to_complex(result)
 
     # Copy attributes
     for attr in data._custom_attrs:
         match attr:
             # Reorder and copy
-            case 'scales' | 'labels' | 'units' | 'axis_info':
+            case 'axes':
                 setattr(result, attr, [getattr(data, attr)[ax] for ax in axes])
             # Deep copy
             case _:
                 setattr(result, attr, copy.deepcopy(getattr(data, attr)))
     
+    
+    is_interleaved = result.axes[-1].get("interleaved_data", None)
+    if is_interleaved == True:
+        result = _interleaved_to_complex(result)
+        result.axes[-1]["interleaved_data"] = False
 
     # Record processing history
     elapsed = time.perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Transpose",
-            'axes': list(axes) if hasattr(axes, '__iter__') else [axes],
+            'axes': [list(axes) if hasattr(axes, '__iter__') else [axes]],
             'shape_before': data.shape,
             'shape_after': result.shape,
             'time_elapsed_s': elapsed,
@@ -1029,7 +1033,11 @@ def add_constant(
     if xn is not None: end = xn
     
     
-    if constant is None and constant_real is None and constant_imaginary is None:
+    if (
+        constant is None
+        and constant_real is None
+        and constant_imaginary is None
+    ):
         raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
     
     
@@ -1142,7 +1150,11 @@ def multiply_constant(
     if xn is not None: end = xn
     
     
-    if constant is None and constant_real is None and constant_imaginary is None:
+    if (
+        constant is None
+        and constant_real is None
+        and constant_imaginary is None
+    ):
         raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
     
     
@@ -1254,9 +1266,13 @@ def set_to_constant(
     if x1 is not None: start = x1
     if xn is not None: end = xn
 
-    if constant is None and constant_real is None and constant_imaginary is None:
+    if (
+        constant is None
+        and constant_real is None
+        and constant_imaginary is None
+    ):
         raise ValueError("At least one of 'constant', 'constant_real', or 'constant_imaginary' must be specified.")
-
+    
     array = data.copy()
     npoints = array.shape[-1]
 
