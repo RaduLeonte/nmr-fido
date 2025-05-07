@@ -45,7 +45,6 @@ data = nf.PS(data, p0=-29.0, p1=0.0) # 10.278 ms
 data = nf.DI(data) # 3.497 m
 data = nf.EXT(data, x1="70ppm", xn="40ppm") # 3.532 ms
 
-
 data = nf.TP(data) # 1.278 ms
 
 data = nf.SP(data, off=0.35, end=0.9, pow=1, c=0.5) # 1.008 ms
