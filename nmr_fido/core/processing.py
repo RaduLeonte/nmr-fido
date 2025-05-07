@@ -4,6 +4,7 @@ import copy
 from nmr_fido.nmrdata import NMRData
 from nmr_fido.utils import _convert_to_index, get_ppm_scale
 from scipy.signal import hilbert
+from scipy import signal
 
 
 def _format_elapsed_time(elapsed: float) -> str:
@@ -70,8 +71,29 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
 
 def solvent_filter(
     data: NMRData,
-    #*,
+    *,
+    filter_mode: str = "Low Pass",
+    lowpass_size: int = 16,
+    lowpass_shape: str = "Boxcar",
+    poly_ext_order: int = 2,
+    spline_noise: float = 1.0,
+    smooth_factor: float = 1.1,
+    skip_points: int = 0,
+    use_poly_ext: bool = True,
+    use_mirror_ext: bool = False,
+    
     # Aliases
+    mode: str = None,
+    fl: int = None,
+    fs: int = None,
+    po: int = None,
+    sn: float = None,
+    sf: float = None,
+    head: int = None,
+    poly: bool = None,
+    mir: bool = None,
+    #noseq: bool = None,
+    #nodms: bool = None,
 ) -> NMRData:
     """
     Desc.
@@ -84,10 +106,66 @@ def solvent_filter(
     Returns:
         NMRData: .
     """
+    start_time = time.perf_counter()
     
-    raise NotImplementedError
+    # Handle argument aliases
+    if mode is not None: filter_mode = {1: "Low Pass", 2: "Spline", 3: "Polynomial"}[mode]
+    if fl is not None: lowpass_size = fl
+    if fs is not None: lowpass_shape = {1: "Boxcar", 2: "Sine", 3: "Sine^2"}[fs]
+    if po is not None: poly_ext_order = po
+    if sn is not None: spline_noise = sn
+    if sf is not None: smooth_factor = sf
+    if head is not None: skip_points = head
+    if poly is not None: use_poly_ext = poly
+    if mir is not None: use_mirror_ext = mir
+
+
+    result = data.copy()
+    sliced_data = result[..., skip_points:]
     
-    result = data
+    filter_width = lowpass_size*2 + 1
+
+    match filter_mode:
+        case "Low Pass":
+            filter = None
+            match lowpass_shape:
+                case "Boxcar":
+                    filter = np.ones(filter_width, float)
+                
+                case "Sine":
+                    filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width))
+                
+                case "Sine^2":
+                    filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width)) ** 2
+            
+            if filter is not None:
+                for index in np.ndindex(sliced_data.shape[:-1]):
+                    fid = sliced_data[index]
+                    # Apply convolution
+                    filtered_fid = signal.convolve(fid, filter, mode="same") / filter_width
+                    # Subtract the filtered signal from the original
+                    sliced_data[index] = fid - filtered_fid
+
+            pass
+        
+        case "Spline":
+            raise NotImplementedError
+        
+        case "Polynomial":
+            raise NotImplementedError
+
+
+    result[..., skip_points:] = sliced_data
+    
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append(
+        {
+            'Function': "Solvent filter",
+            'filter_mode': filter_mode,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        }
+    )
     
     return result
 
@@ -643,6 +721,7 @@ def phase(
     Returns:
         NMRData: Data after applying phase correction.
     """
+    # TO DO: Implement time domain phase correction
     start_time = time.perf_counter()
     
     # Handle argument aliases
