@@ -56,6 +56,7 @@ def _convert_to_index(
             return int(np.clip(idx, 0, npoints - 1))
 
     raise ValueError(f"Invalid start/end value: {value}")
+    
 
 
 def get_ppm_scale(npoints: int, sw: float, ori: float, obs: float) -> np.ndarray:

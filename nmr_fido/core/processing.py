@@ -18,6 +18,35 @@ def _format_elapsed_time(elapsed: float) -> str:
     return f"{seconds}s {milliseconds}ms {microseconds}µs"
 
 
+def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
+    # Normalize the axis to handle negative indices
+    dim = dim if dim >= 0 else data.ndim + dim
+    
+    # Calculate the new shape, halving the last dimension
+    new_shape = list(data.shape)
+    if new_shape[dim] % 2 != 0:
+        raise ValueError(
+            f"The target axis {dim} length must be even, representing interleaved real/imaginary pairs."
+        )
+
+
+    new_shape[dim] //= 2
+
+    # Rearrange the data along the target axis
+    slices_real = [slice(None)] * data.ndim
+    slices_imag = [slice(None)] * data.ndim
+
+    slices_real[dim] = slice(0, None, 2)  # Real parts
+    slices_imag[dim] = slice(1, None, 2)  # Imaginary parts
+
+    # Construct the complex array
+    complex_data = np.empty(new_shape, dtype=np.complex64)
+    complex_data.real = data[tuple(slices_real)]
+    complex_data.imag = data[tuple(slices_imag)]
+
+    return NMRData(complex_data, copy_from=data)
+
+
 def solvent_filter(
     data: NMRData,
     #*,
@@ -340,7 +369,6 @@ def fourier_transform(
     bruk: bool = False,
     #dmx: bool = False,
     #nodmx: bool = False,
-    norm: str = "backward",
     # Aliases
     real: bool = None,
     inv: bool = None,
@@ -352,15 +380,11 @@ def fourier_transform(
 
     Args:
         data (NMRData): Input NMRData.
-        real_only (bool): Promote real-only input to complex if True.
+        real_only (bool): Set imaginary part of data to 0 before performing FFT.
         inverse (bool): Perform inverse FFT if True.
         negate_imaginaries (bool): Multiply imaginary parts by -1 before FFT.
         sign_alteration (bool): Apply sign alternation to input (multiply every other point by -1).
         bruk (bool): If True, sets real_only and sign_alteration to True automatically (Bruker-style processing).
-        norm (str): Normalization mode for the FFT
-            - "backward" (default): No scaling on forward FFT, 1/N scaling on inverse FFT (standard NMR convention).
-            - "forward": 1/N scaling on forward FFT, no scaling on inverse FFT (rare, signal processing style).
-            - "ortho": √N scaling on both forward and inverse FFT (symmetric, orthonormal transform).
 
     Aliases:
         real: Alias for real_only.
@@ -385,33 +409,55 @@ def fourier_transform(
 
     array = data.copy()
     
-    if np.isrealobj(array):
-        if real_only:
-            array = array.astype(np.complex128)
-        else:
-            raise ValueError(
-                "Input data is real-only. Set real_only=True (or real=True) if you want to allow complex FT on real data."
-            )
+    if real_only:
+        array = array.astype(np.complex128)
+        array.imag = 0.0
 
     # Sign alteration if needed
-    if sign_alteration:
-        alt = np.ones(array.shape[-1])
-        alt[1::2] = -1
-        array = array * alt
+    if sign_alteration and not inverse:
+        # Sign alteration for inverse is applied after ifft
+        alternating_ones = np.ones(array.shape[-1])
+        alternating_ones[1::2] = -1
+        array = array * alternating_ones
 
     # Negate imaginary parts if needed
     if negate_imaginaries:
         array = np.real(array) - 1j * np.imag(array)
 
+    if not np.iscomplex(array).all():
+        array = array.astype("complex64")
+
     # Perform FFT or IFFT
     if inverse:
-        transformed = np.fft.ifft(np.fft.ifftshift(array, axes=(-1,)), axis=-1, norm=norm)
+        transformed = (
+            np.fft.fft(
+                np.fft.ifftshift(array, axes=(-1,)),
+                axis=-1
+            ).astype(data.dtype)
+        )
+        # Data comes out as data * 1 because we're using fft for inverse FT
+        # but we need data * 1/N
+        transformed /= int(data.shape[-1]) # apply norm
+        
+        if sign_alteration:
+            alternating_ones = np.ones(array.shape[-1])
+            alternating_ones[1::2] = -1
+            transformed = transformed * alternating_ones
+        
     else:
-        transformed = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(array, axes=(-1,)), axis=-1, norm=norm), axes=(-1,))
+        transformed = (
+            np.fft.fftshift(
+                np.fft.ifft(array, axis=-1).astype(data.dtype),
+                axes=(-1,),
+            )
+        )
+        # Data comes out as data * 1/N because we're using ifft for normal FT
+        transformed *= int(data.shape[-1]) # undo norm
 
 
     # Result
     result = NMRData(transformed, copy_from=data)
+    
     
     # Convert scale to ppm
     result.scale_to_ppm()
@@ -426,7 +472,6 @@ def fourier_transform(
             'negate_imaginaries': negate_imaginaries,
             'sign_alteration': sign_alteration,
             'bruk': bruk,
-            'norm': norm,
             'input_real': np.isrealobj(data),
             'time_elapsed_s': elapsed,
             'time_elapsed_str': _format_elapsed_time(elapsed),
@@ -865,8 +910,10 @@ POLY.__name__ = "POLY"  # Auto-generated
 def transpose(
     data: NMRData,
     *,
-    axes: list[int] = None
-    #hyper: bool = False,
+    axes: list[int] = None,
+    hyper_complex: bool = False,
+    # Aliases
+    hyper: bool = False,
 ) -> NMRData:
     """
     Transpose the data and reorder metadata accordingly.
@@ -874,6 +921,10 @@ def transpose(
     Args:
         data (NMRData): The data to transpose.
         axes (list[int], optional): New axis order. If None, reverse axes.
+        hyper_complex (bool, optional): Flag to perform hyper complex transpose.
+        
+    Aliases:
+        hyper: Alias for hyper_complex.
 
     Returns:
         NMRData: Transposed data.
@@ -886,12 +937,23 @@ def transpose(
         axes = list(range(data.ndim))
         axes.reverse()
     
-    result = super(NMRData, data).transpose(*axes)
+    if hyper:
+        raise NotImplementedError
+    else:
+        result = super(NMRData, data).transpose(*axes)
+        
+        is_interleaved = False
+        
+        if is_interleaved:
+            result = _interleaved_to_complex(result)
 
+    # Copy attributes
     for attr in data._custom_attrs:
         match attr:
+            # Reorder and copy
             case 'scales' | 'labels' | 'units' | 'axis_info':
                 setattr(result, attr, [getattr(data, attr)[ax] for ax in axes])
+            # Deep copy
             case _:
                 setattr(result, attr, copy.deepcopy(getattr(data, attr)))
     

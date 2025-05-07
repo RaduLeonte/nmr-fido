@@ -15,19 +15,22 @@ filt_dic = {k:v for k,v in filt_dic.items() if any(key in k for key in keys)}
 
 # process the direct dimension
 #dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.98, pow=1, c=1.0)
-#dic, data = ng.pipe_proc.zf(dic, data, auto=True)
+dic, data = ng.pipe_proc.zf(dic, data, auto=True)
 dic, data = ng.pipe_proc.ft(dic, data, auto=True)
-#dic, data = ng.pipe_proc.ps(dic, data, p0=-29.0, p1=0.0)
-#dic, data = ng.pipe_proc.di(dic, data)
+dic, data = ng.pipe_proc.ps(dic, data, p0=-29.0, p1=0.0)
+dic, data = ng.pipe_proc.di(dic, data)
+print("After x FT", data.shape)
 
-# process the indirect dimension
-#dic, data = ng.pipe_proc.tp(dic, data)
+dic, data = ng.pipe_proc.tp(dic, data)
+print("After TP", data.shape)
+
 #dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.9, pow=1, c=0.5)
 #dic, data = ng.pipe_proc.zf(dic, data, size=2048)
-#dic, data = ng.pipe_proc.ft(dic, data, auto=True)
+dic, data = ng.pipe_proc.ft(dic, data, auto=True, debug=False)
 #dic, data = ng.pipe_proc.ps(dic, data, p0=0.0, p1=0.0)
 #dic, data = ng.pipe_proc.di(dic, data)
-#dic, data = ng.pipe_proc.tp(dic, data)
+
+dic, data = ng.pipe_proc.tp(dic, data)
 
 # write out processed data
 #ng.pipe.write("2d_pipe.ft2", dic, data, overwrite=True)
@@ -43,7 +46,7 @@ uc_15n = ng.pipe.make_uc(dic, data, dim=0)
 ppm_15n = uc_15n.ppm_scale()
 ppm_15n_0, ppm_15n_1 = uc_15n.ppm_limits()
 
-contour_start = 2_000           # contour level start value
+contour_start = 30_000           # contour level start value
 contour_num = 16                # number of contour levels
 contour_factor = 1.10          # scaling factor between contour levels
 cl = contour_start * contour_factor ** np.arange(contour_num)
@@ -59,8 +62,9 @@ ax.contour(
 )
 
 plt.gca().invert_xaxis()
-ax.set_xlabel("15N")
-ax.set_ylabel("13C")
+ax.set_title("nmrglue")
+ax.set_xlabel("13C")
+ax.set_ylabel("15N")
 ax.set_xlim(70, 40)
-#ax.set_ylim(135, 100)
+ax.set_ylim(135, 100)
 plt.show()

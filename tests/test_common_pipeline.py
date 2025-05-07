@@ -32,38 +32,34 @@ print("\n")
 print(data.shape)
 
 #data = nf.SP(data, off=0.35, end=0.98, pow=1, c=1.0)
-#data = nf.ZF(data)
+data = nf.ZF(data,size=4096)
 data = nf.FT(data)
-#data = nf.PS(data, p0=29.0, p1=0.0)
-#data = nf.DI(data)
-#print(data, "\n")
+data = nf.PS(data, p0=-29.0, p1=0.0)
+data = nf.DI(data)
+print("After x FT", data.shape)
 #data = nf.EXT(data, x1="70ppm", xn="40ppm")
-#print(data, "\n")
 
-#data = nf.TP(data)
-
+data = nf.TP(data)
+print("After TP", data.shape)
 #data = nf.SP(data, off=0.35, end=0.9, pow=1, c=0.5)
-#data = nf.ZF(data)
-#data = nf.FT(data, neg=True)
-#data = nf.PS(data)
+#data = nf.ZF(data, size=2048)
+data = nf.FT(data)
+pprint(data.processing_history[-1])
+#data = nf.PS(data, p0=0.0, p1=0.0)
 #data = nf.DI(data)
 
-#data = nf.TP(data)
-print("--- done ---")
+data = nf.TP(data)
+print("\n\n--- done ---")
 print(data)
 
-data.scale_to_ppm(-2)
-
-#pprint(data.processing_history)
-
-for entry in data.processing_history:
-    print(f'{entry["Function"]} -> {entry["time_elapsed_str"]}')
+#for entry in data.processing_history:
+#    print(f'{entry["Function"]} -> {entry["time_elapsed_str"]}')
     
 
 fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")
 
 
-contour_start = 2_000           # contour level start value
+contour_start = 30_000           # contour level start value
 contour_num = 16                # number of contour levels
 contour_factor = 1.10          # scaling factor between contour levels
 cl = contour_start * contour_factor ** np.arange(contour_num)
@@ -79,8 +75,9 @@ ax.contour(
 )
 
 plt.gca().invert_xaxis()
+ax.set_title("NMR Fido")
 ax.set_xlabel(data.labels[-1])
 ax.set_ylabel(data.labels[-2])
 ax.set_xlim(70, 40)
-#ax.set_ylim(135, 100)
+ax.set_ylim(135, 100)
 plt.show()
