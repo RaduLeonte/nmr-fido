@@ -1780,3 +1780,80 @@ def null(data: NMRData) -> NMRData:
 NULL = null
 NULL.__doc__ = null.__doc__  # Auto-generated
 NULL.__name__ = "NULL"  # Auto-generated
+
+
+def reverse(
+    data: NMRData,
+    *,
+    adjust_spectral_width: bool = True,
+    # Aliases
+    sw: bool = None,
+) -> NMRData:
+    """
+    Reverse NMRData in the last dimension.
+
+    Args:
+        data (NMRData): Input NMR dataset to reverse.
+        adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after reversing.
+        
+    Aliases:
+        sw: Alias for adjust_spectral_width.
+
+    Returns:
+        NMRData: Reversed NMRdata, optionally with updated spectral calibration.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle aliases
+    if sw is not None: adjust_spectral_width = sw
+    
+    reversed_data = data[..., ::-1]
+
+    
+    new_data = NMRData(reversed_data, copy_from=data)
+    
+    if adjust_spectral_width:
+        dim = -1 
+        full_size = data.shape[dim]
+        new_size = new_data.shape[dim]
+
+        # Adjust SW, ORI, and OBS based on ppm limits
+        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+        
+        new_axis_dict = data.axes[dim].copy()
+        
+        if data.axes[dim]["unit"] == "pts":
+            # Calculate the ORI adjustment by one point equivalent
+            point_shift = sw / full_size
+            new_ori = ori + point_shift # Adjust ORI by one point shift
+            new_ppm_scale = new_axis_dict['scale'][::-1] # Reverse the ppm scale
+        
+        else:
+            # Recalculate ppm scale 
+            ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
+            new_ppm_scale = ppm_scale[::-1]  # Reverse the ppm scale
+            ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
+            
+            new_ori = obs * ppm_max # Adjust ORI to reflect the new ppm max
+
+        new_axis_dict['SW'] = sw # remains unchanged
+        new_axis_dict['ORI'] = new_ori
+        new_axis_dict['OBS'] = obs # OBS remains unchanged
+        new_axis_dict['scale'] = new_ppm_scale
+        new_data.axes[dim] = new_axis_dict
+
+
+    elapsed = time.perf_counter() - start_time
+    new_data.processing_history.append({
+        'Function': "Reverse data",
+        'adjusted_sw': adjust_spectral_width,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return new_data
+
+# NMRPipe alias
+REV = reverse
+REV.__doc__ = reverse.__doc__  # Auto-generated
+REV.__name__ = "REV"  # Auto-generated

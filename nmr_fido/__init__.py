@@ -14,6 +14,8 @@ from .core.processing import (
     multiply_constant, MULT,
     set_to_constant, SET,
     delete_imaginaries, DI,
+    null, NULL,
+    reverse, REV,
 )
 
 __all__ = [
@@ -32,4 +34,6 @@ __all__ = [
     "multiply_constant", "MULT",
     "set_to_constant", "SET",
     "delete_imaginaries", "DI",
+    "null", "NULL",
+    "reverse", "REV",
 ]
