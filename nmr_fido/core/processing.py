@@ -1948,3 +1948,55 @@ def right_shift(
 RS = right_shift
 RS.__doc__ = right_shift.__doc__  # Auto-generated
 RS.__name__ = "RS"  # Auto-generated
+
+
+def left_shift(
+    data: NMRData,
+    *,
+    shift_amount: int = 0,
+    adjust_spectral_width: bool = True,
+    # Aliases
+    rs: int = None,
+    sw: bool = None,
+) -> NMRData:
+    """
+    Apply a left shift and zero pad to the data in the last dimension.
+
+    Args:
+        data (NMRData): Input NMR dataset.
+        shift_amount (int): Number of points to shift. Positive for left shift, negative for right shift.
+        adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
+        
+    Aliases:
+        rs: Alias for shift_amount.
+        sw: Alias for adjust_spectral_width.
+
+    Returns:
+        NMRData: Data after applying right shift and zero padding.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle aliases
+    if rs is not None: shift_amount = rs
+    if sw is not None: adjust_spectral_width = sw
+    
+    
+    new_data = right_shift(data, shift_amount*-1, adjust_spectral_width)
+    new_data.processing_history.pop()
+
+
+    elapsed = time.perf_counter() - start_time
+    new_data.processing_history.append({
+        'Function': "Left shift data",
+        'shift_amount': shift_amount,
+        'adjusted_sw': adjust_spectral_width,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return new_data
+
+# NMRPipe alias
+LS = left_shift
+LS.__doc__ = left_shift.__doc__  # Auto-generated
+LS.__name__ = "LS"  # Auto-generated
