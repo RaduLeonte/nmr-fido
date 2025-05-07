@@ -276,6 +276,55 @@ LP.__doc__ = linear_prediction.__doc__  # Auto-generated
 LP.__name__ = "LP"  # Auto-generated
 
 
+def _apply_window(
+    data: NMRData,
+    window: np.ndarray,
+    size_window: int,
+    start: int,
+    invert_window: bool,
+    scale_factor_first_point: float,
+    fill_outside_one: bool,
+) -> NMRData:
+    # Invert window if necessary
+    if invert_window:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            inv_window = np.zeros_like(window)
+            mask = window != 0
+            inv_window[mask] = 1.0 / window[mask]
+            window = inv_window
+            
+        if scale_factor_first_point != 0.0:
+            scale_factor_first_point = 1.0 / scale_factor_first_point
+        else:
+            scale_factor_first_point = 1.0
+    
+    # Create zeroes array to insert window function into
+    full_window = np.zeros_like(data)
+    npoints = data.shape[-1]
+    
+    if start - 1 >= npoints:
+        raise ValueError(f"Start point {start} is beyond data size {npoints}.")
+    
+    # Clip window if it extends past the data length
+    end_point = min((start - 1) + size_window, npoints)
+    clip_size = end_point - (start - 1)
+    
+    # Insert window into array
+    full_window[..., start-1:end_point] = window[:clip_size]
+    
+    # Multiply poitns outside the window range by 1
+    if fill_outside_one:
+        mask = full_window == 0
+        full_window[mask] = 1.0
+    
+    # Apply window
+    result = data * full_window
+    
+    # Scale first point
+    result[..., start-1] *= scale_factor_first_point
+    
+    return result
+
 
 def sine_bell_window(
     data: NMRData,
@@ -346,43 +395,14 @@ def sine_bell_window(
         exponent
     ).astype(data.dtype)
     
-    # Invert window if necessary
-    if invert_window:
-        with np.errstate(divide='ignore', invalid='ignore'):
-            inv_window = np.zeros_like(window)
-            mask = window != 0
-            inv_window[mask] = 1.0 / window[mask]
-            window = inv_window
-            
-        if scale_factor_first_point != 0.0:
-            scale_factor_first_point = 1.0 / scale_factor_first_point
-        else:
-            scale_factor_first_point = 1.0
-    
-    # Create zeroes array to insert window function into
-    full_window = np.zeros_like(data)
-    npoints = data.shape[-1]
-    
-    if start - 1 >= npoints:
-        raise ValueError(f"Start point {start} is beyond data size {npoints}.")
-    
-    # Clip window if it extends past the data length
-    end_point = min((start - 1) + size_window, npoints)
-    clip_size = end_point - (start - 1)
-    
-    # Insert window into array
-    full_window[..., start-1:end_point] = window[:clip_size]
-    
-    # Multiply poitns outside the window range by 1
-    if fill_outside_one:
-        mask = full_window == 0
-        full_window[mask] = 1.0
-    
-    # Apply window
-    result = data * full_window
-    
-    # Scale first point
-    result[..., start-1] *= scale_factor_first_point
+    result = _apply_window(
+        data, window,
+        size_window,
+        start,
+        invert_window,
+        scale_factor_first_point,
+        fill_outside_one
+    )
     
     elapsed = time.perf_counter() - start_time
     result.processing_history.append(
@@ -484,43 +504,14 @@ def lorentz_to_gauss_window(
     )
     window = (exp_component * gauss_component).astype(data.dtype)
     
-    # Invert window if necessary
-    if invert_window:
-        with np.errstate(divide='ignore', invalid='ignore'):
-            inv_window = np.zeros_like(window)
-            mask = window != 0
-            inv_window[mask] = 1.0 / window[mask]
-            window = inv_window
-            
-        if scale_factor_first_point != 0.0:
-            scale_factor_first_point = 1.0 / scale_factor_first_point
-        else:
-            scale_factor_first_point = 1.0
-    
-    # Create zeroes array to insert window function into
-    full_window = np.zeros_like(data)
-    
-    if start - 1 >= npoints:
-        raise ValueError(f"Start point {start} is beyond data size {npoints}.")
-    
-    # Clip window if it extends past the data length
-    end_point = min((start - 1) + size_window, npoints)
-    clip_size = end_point - (start - 1)
-    
-    # Insert window into array
-    full_window[..., start-1:end_point] = window[:clip_size]
-    
-    # Multiply poitns outside the window range by 1
-    if fill_outside_one:
-        mask = full_window == 0
-        full_window[mask] = 1.0
-    
-    # Apply window
-    result = data * full_window
-    
-    # Scale first point
-    if scale_factor_first_point != 1.0:
-        result[..., start - 1] *= scale_factor_first_point
+    result = _apply_window(
+        data, window,
+        size_window,
+        start,
+        invert_window,
+        scale_factor_first_point,
+        fill_outside_one
+    )
     
     
     elapsed = time.perf_counter() - start_time
