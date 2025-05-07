@@ -537,6 +537,98 @@ GM.__doc__ = lorentz_to_gauss_window.__doc__  # Auto-generated
 GM.__name__ = "GM"  # Auto-generated
 
 
+def exp_mult_window(
+    data: NMRData,
+    *,
+    line_broadening: float = 0.0,
+    size_window: int = None,
+    start: int = 1,
+    scale_factor_first_point: float = 1.0,
+    fill_outside_one: bool = False,
+    invert_window: bool = False,
+    # Aliases
+    lb: float = None,
+    size: int = None,
+    c: float = None,
+    one: bool = None,
+    inv: bool = None,
+) -> NMRData:
+    """
+    Apply an exponential multiply apodization (window) to the last dimension of the data.
+
+    Args:
+        data (NMRData): Input data.
+        line_broadening (float): Line broadening factor (default 0.0).
+        size_window (int, optional): Number of points in the window (default: size of last axis).
+        start (int): Index to start applying the window (default 1 = first point).
+        scale_factor_first_point (float): Scaling for the first point (default 1.0).
+        fill_outside_one (bool): If True, data outside window is multiplied by 1.0 instead of 0.0.
+        invert_window (bool): If True, apply 1/window instead of window and 1/scale_factor_first_point.
+
+    Aliases:
+        lb: Alias for line_broadening
+        size: Alias for size_window
+        c: Alias for scale_factor_first_point
+        one: Alias for fill_outside_one
+        inv: Alias for invert_window
+
+    Returns:
+        NMRData: Data after applying exponential multiply apodization.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle argument aliases
+    if lb is not None: line_broadening = lb
+    if size is not None: size_window = size
+    if c is not None: scale_factor_first_point = c
+    if one is not None: fill_outside_one = one
+    if inv is not None: invert_window = inv
+    
+    if size_window is None:
+        size_window = int(data.shape[-1])
+    
+    sw = data.axes[-1].get("SW", None)
+    if sw is None:
+        raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    
+    # Create window
+    t = np.arange(size_window)
+    
+    window = np.expt(
+        -np.pi * t * line_broadening / sw
+    ).astype(data.dtype)
+    
+    result = _apply_window(
+        data, window,
+        size_window,
+        start,
+        invert_window,
+        scale_factor_first_point,
+        fill_outside_one
+    )
+    
+    
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append({
+        'Function': "Apodization: Exponential multiply window",
+        'line_broadening': line_broadening,
+        'size_window': size_window,
+        'start': start,
+        'scale_factor_first_point': scale_factor_first_point,
+        'fill_outside_one': fill_outside_one,
+        'invert_window': invert_window,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+    
+    return result
+
+# NMRPipe alias
+EM = exp_mult_window
+EM.__doc__ = exp_mult_window.__doc__  # Auto-generated
+EM.__name__ = "EM"  # Auto-generated
+
+
 
 def zero_fill(
     data: NMRData,
