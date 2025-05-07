@@ -2000,3 +2000,102 @@ def left_shift(
 LS = left_shift
 LS.__doc__ = left_shift.__doc__  # Auto-generated
 LS.__name__ = "LS"  # Auto-generated
+
+
+def circular_shift(
+    data: NMRData,
+    *,
+    right_shift_amount: int = 0,
+    left_shift_amount: int = 0,
+    negate_shifted: bool = False,
+    adjust_spectral_width: bool = True,
+    # Aliases
+    rs: int = None,
+    ls: int = None,
+    neg: bool = None,
+    sw: bool = None,
+) -> NMRData:
+    """
+    Apply a circular shift to the data in the last dimension.
+
+    Args:
+        data (NMRData): Input NMR dataset.
+        right_shift_amount (int): Number of points to right shift.
+        left_shift_amount (int): Number of points to left shift.
+        negate_shifted (bool): If True, negate the shifted data.
+        adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
+
+    Aliases:
+        rs: Alias for right_shift_amount.
+        ls: Alias for left_shift_amount.
+        neg: Alias for negate_shifted.
+        sw: Alias for adjust_spectral_width.
+
+    Returns:
+        NMRData: Data after applying circular shift.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle aliases
+    if rs is not None: right_shift_amount = rs
+    if ls is not None: left_shift_amount = ls
+    if neg is not None: negate_shifted = neg
+    if sw is not None: adjust_spectral_width = sw
+    
+    if right_shift_amount != 0 and left_shift_amount != 0:
+        raise ValueError("Specify only one of right_shift_amount or left_shift_amount, not both.")
+    
+    
+    shift_amount = right_shift_amount if right_shift_amount != 0 else -left_shift_amount
+    
+    dim = -1
+    npoints = data.shape[dim]
+    shift_amount = shift_amount % npoints
+    
+    shifted_data = np.roll(data, shift_amount, axis=dim)
+    
+    if negate_shifted:
+        if shift_amount > 0:
+            shifted_data[..., :shift_amount] *= -1
+        elif shift_amount < 0:
+            shifted_data[..., shift_amount:] *= -1
+    
+    new_data = NMRData(shifted_data, copy_from=data)
+
+
+    if adjust_spectral_width:
+        # Extract SW, ORI, OBS
+        sw_value, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+
+        # Calculate the point shift adjustment
+        point_shift = sw_value / npoints
+
+        # Adjust ORI based on shift
+        new_ori = ori - (point_shift * shift_amount)
+
+        # Update axis dictionary
+        new_axis_dict = data.axes[dim].copy()
+        new_axis_dict['SW'] = sw_value  # SW remains unchanged
+        new_axis_dict['ORI'] = new_ori
+        new_axis_dict['OBS'] = obs  # OBS remains unchanged
+        new_axis_dict['scale'] = np.roll(new_axis_dict['scale'], shift_amount)
+
+        new_data.axes[dim] = new_axis_dict
+
+
+    elapsed = time.perf_counter() - start_time
+    new_data.processing_history.append({
+        'Function': "Circular shift data",
+        'shift_amount': shift_amount,
+        'negate_shifted': negate_shifted,
+        'adjusted_sw': adjust_spectral_width,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return new_data
+
+# NMRPipe alias
+CS = circular_shift
+CS.__doc__ = circular_shift.__doc__  # Auto-generated
+CS.__name__ = "CS"  # Auto-generated

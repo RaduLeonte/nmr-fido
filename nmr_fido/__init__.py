@@ -18,6 +18,7 @@ from .core.processing import (
     reverse, REV,
     right_shift, RS,
     left_shift, LS,
+    circular_shift, CS,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "reverse", "REV",
     "right_shift", "RS",
     "left_shift", "LS",
+    "circular_shift", "CS",
 ]
