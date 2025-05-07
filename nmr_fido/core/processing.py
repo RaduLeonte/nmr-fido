@@ -878,8 +878,27 @@ EXT.__name__ = "EXT"  # Auto-generated
 def polynomial_baseline_correction(
     data: NMRData,
     *,
-    domain: str = "freq",
+    sub_start: int = 0,
+    sub_end: int = -1,
+    fit_start: int = 0,
+    fit_end: int = -1,
+    start: int = None,
+    end: int = None,
+    node_list: list[int] = None,
+    node_width: int = 1,
     order: int = 4,
+    initial_fit_nodes: int = 0,
+    use_first_points: bool = False,
+    use_last_points: bool = False,
+    use_node_avg: bool = False,
+    sine_filter: bool = False,
+    
+    domain: str = "frequency",
+    noise_window_size: int = 8,
+    min_baseline_fraction: float = 0.33,
+    noise_adjustment_factor: float = 1.5,
+    rms_noise_value: float = 0.0,
+    
     # Aliases
     sx1: int = None,
     sxn: int = None,
@@ -895,29 +914,244 @@ def polynomial_baseline_correction(
     last: int = None,
     avg: int = None,
     filt: int = None,
-    time: int = None,
+    
+    time: bool = None,
+    window: int = None,
+    frac: float = None,
+    nf: float = None,
+    noise: float = None,
+    #noseq: bool = None,
+    #nodmx: bool = None,
 ) -> NMRData:
     """
-    Desc.
+    Apply polynomial baseline correction to the last dimension of the NMRData.
 
     Args:
-        data (NMRData): The data to transpose.
+        data (NMRData): Input data.
+        sub_start (int): Start index for baseline subtraction region. Defaults to 0.
+        sub_end (int): End index for baseline subtraction region. Defaults to the last index.
+        fit_start (int): Start index for baseline fitting region. Defaults to 0.
+        fit_end (int): End index for baseline fitting region. Defaults to the last index.
+        start (int, optional): If provided, overrides both `sub_start` and `fit_start`.
+        end (int, optional): If provided, overrides both `sub_end` and `fit_end`.
+        node_list (list[int], optional): List of node center indices for fitting. If not specified, automatic node selection may be applied.
+        node_width (int): Number of points to include on each side of each node center for fitting. Defaults to 1.
+        order (int): Polynomial order for baseline fitting. Defaults to 4.
+        initial_fit_nodes (int): Number of initial nodes to include in the fit. If 0, no initial nodes are used.
+        use_first_points (bool): If True, include the first few points as nodes for baseline fitting. Defaults to False.
+        use_last_points (bool): If True, include the last few points as nodes for baseline fitting. Defaults to False.
+        use_node_avg (bool): If True, use average values within nodes instead of individual points for fitting. Defaults to False.
+        sine_filter (bool): If True, apply a sine filter to the node data. Requires `use_node_avg` to be True. Defaults to False.
+        
+        domain (str): Data domain, either "frequency" or "time". Defaults to "frequency".
+        noise_window_size (int): Window size for noise estimation. Only applicable in the "time" domain.
+        min_baseline_fraction (float): Minimum fraction of data to consider as baseline. Only applicable in the "time" domain.
+        noise_adjustment_factor (float): Adjustment factor for noise thresholding. Only applicable in the "time" domain.
+        rms_noise_value (float): Pre-computed RMS noise value. Only applicable in the "time" domain.
+
+    Aliases:
+        sx1: Alias for `sub_start`.
+        sxn: Alias for `sub_end`.
+        fx1: Alias for `fit_start`.
+        fxn: Alias for `fit_end`.
+        x1: Alias for `start`.
+        xn: Alias for `end`.
+        nl: Alias for `node_list`.
+        nw: Alias for `node_width`.
+        ord: Alias for `order`.
+        nc: Alias for `initial_fit_nodes`.
+        first: Alias for `use_first_points`.
+        last: Alias for `use_last_points`.
+        avg: Alias for `use_node_avg`.
+        filt: Alias for `sine_filter`.
+        time: If True, switch domain to "time" and enable time-domain processing parameters.
+        window: Alias for `noise_window_size`.
+        frac: Alias for `min_baseline_fraction`.
+        nf: Alias for `noise_adjustment_factor`.
+        noise: Alias for `rms_noise_value`.
+    
+    
+    Unimplemented/Unused Arguments:
+        - initial_fit_nodes
+        - use_first_points
+        - use_last_points
+        - use_node_avg
+        - sine_filter
 
     Returns:
-        NMRData: .
+        NMRData: Data after applying polynomial baseline correction.
     """
+    # TO DO: Implement missing arguments
+    start_time = time.perf_counter()
     
-    raise NotImplementedError
+    # Switch domain
+    if time is not None: domain = "time"
     
-    result = data
+    if domain == "time":
+        # Handle aliases
+        if window is not None: noise_window_size = window
+        if frac is not None: min_baseline_fraction = frac
+        if nf is not None: noise_adjustment_factor = nf
+        if noise is not None: rms_noise_value = noise
+        
+        npoints = data.shape[-1]
+        window_size = noise_window_size
+        min_baseline_pts = int(min_baseline_fraction * npoints)
+        
+        # Estimate RMS noise value
+        if rms_noise_value == 0.0:
+            # Divide data into non-overlapping windows for each slice along the last dimension
+            windows = [data[..., i:i + window_size] for i in range(0, npoints, window_size)]
+            noise_estimates = [np.std(w, axis=-1) for w in windows if w.shape[-1] == window_size]
+            
+            if noise_estimates:
+                # Compute median RMS noise value across all windows
+                rms_noise_value = np.median(np.concatenate(noise_estimates), axis=-1)
+        
+        # Define baseline threshold
+        baseline_threshold = rms_noise_value * noise_adjustment_factor
+        
+        def fit_and_subtract(vector):
+            # Identify baseline points
+            baseline_mask = np.abs(vector) < baseline_threshold
+            baseline_indices = np.where(baseline_mask)[0]
+
+            # Ensure sufficient baseline points
+            if len(baseline_indices) < min_baseline_pts:
+                # Fallback to first and last points
+                baseline_indices = np.concatenate((np.arange(window_size), np.arange(npoints - window_size, npoints)))
+                baseline_indices = np.unique(baseline_indices)
+
+            if len(baseline_indices) < order + 1:
+                return vector
+
+            # Fit polynomial to baseline points
+            x_fit = baseline_indices
+            y_fit = vector[x_fit]
+            coeffs = np.polyfit(x_fit, y_fit, order)
+            baseline = np.polyval(coeffs, np.arange(npoints))
+
+            # Subtract baseline
+            corrected_vector = vector - baseline
+            return corrected_vector
+
+        # Apply correction along the last axis
+        corrected_data = np.apply_along_axis(fit_and_subtract, axis=-1, arr=data)
+        
+        elapsed = time.perf_counter() - start_time
+        corrected_data.processing_history.append(
+            {
+                'Function': "Time domain polynomial baseline correction",
+                'order': order,
+                'noise_window_size': noise_window_size,
+                'min_baseline_fraction': min_baseline_fraction,
+                'noise_adjustment_factor': noise_adjustment_factor,
+                'rms_noise_value': rms_noise_value,
+                'baseline_threshold': baseline_threshold,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        
+        return corrected_data
     
-    result.processing_history.append(
-        {
-            'Function': "Polynomial baseline correction",
-        }
-    )
-    
-    return result
+    elif domain == "frequency":
+        # Handle aliases
+        if sx1 is not None: sub_start = sx1
+        if sxn is not None: sub_end = sxn
+        if fx1 is not None: fit_start = fx1
+        if fxn is not None: fit_end = fxn
+        if x1 is not None: start = x1
+        if xn is not None: end = xn
+        if nl is not None: node_list = nl
+        if nw is not None: node_width = nw
+        if ord is not None: order = ord
+        if nc is not None: initial_fit_nodes = nc
+        if first is not None: use_first_points = first
+        if last is not None: use_last_points = last
+        if avg is not None: use_node_avg = avg
+        if filt is not None: sine_filter = filt
+        
+        # Overwrite subtraction region range and fit region range
+        if start is not None:
+            sub_start = start
+            fit_start = start
+        if end is not None:
+            sub_end = end
+            fit_end = end
+            
+        if sub_end == -1: sub_end = data.shape[-1] - 1
+        if fit_end == -1: fit_end = data.shape[-1] - 1
+        
+        result = data.copy()
+        npoints = result.shape[-1]
+        
+        node_groups = []
+        if node_list is not None:
+            node_list = [_convert_to_index(result, n, npoints, default=None) for n in node_list]
+            for center in node_list:
+                if center is None: continue
+                
+                node_group_start = max(0, center - node_width)
+                node_group_end = min(npoints, center + node_width + 1)
+                node_group = list(range(node_group_start, node_group_end))
+                node_groups.extend(node_group)
+
+        node_groups = sorted(set(node_groups))
+        
+        sub_start_idx = _convert_to_index(result, sub_start, npoints, default=0)
+        sub_end_idx = _convert_to_index(result, sub_end, npoints, default=npoints - 1)
+        fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
+        fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
+        
+        
+        def fit_and_subtract(vector: np.ndarray) -> np.ndarray:
+            if node_groups:
+                x_fit = np.array(node_groups)
+                y_fit = vector[node_groups]
+            else:
+                # Default to using the entire fit range
+                x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
+                y_fit = vector[fit_start_idx:fit_end_idx + 1]
+            
+            if len(x_fit) < order + 1:
+                return vector
+            
+            # Subtraction range
+            x_subtract = np.arange(sub_start_idx, sub_end_idx + 1)
+            
+            coeffs = np.polyfit(x_fit, y_fit, order)
+            baseline = np.polyval(coeffs, x_subtract)
+            
+            corrected = vector.copy()
+            corrected[sub_start_idx:sub_end_idx + 1] -= baseline
+            
+            return corrected
+        
+        corrected_data = np.apply_along_axis(lambda v: fit_and_subtract(v), axis=-1, arr=data)
+        
+        elapsed = time.perf_counter() - start_time
+        corrected_data.processing_history.append(
+            {
+                'Function': "Frequency domain polynomial baseline correction",
+                'sub_start': sub_start,
+                'sub_end': sub_end,
+                'fit_start': fit_start,
+                'fit_end': fit_end,
+                'order': order,
+                'node_list': node_list,
+                'node_width': node_width,
+                'use_first_points': use_first_points,
+                'use_last_points': use_last_points,
+                'use_node_avg': use_node_avg,
+                'sine_filter': sine_filter,
+                'n_nodes': len(node_groups),
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        
+        return corrected_data
 
 # NMRPipe alias
 POLY = polynomial_baseline_correction
