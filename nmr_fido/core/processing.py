@@ -409,6 +409,143 @@ SP.__doc__ = sine_bell_window.__doc__  # Auto-generated
 SP.__name__ = "SP"  # Auto-generated
 
 
+def lorentz_to_gauss_window(
+    data: NMRData,
+    *,
+    inv_exp_width: float = 0.0,
+    broaden_width: float = 0.0,
+    center: float = 0.0,
+    size_window: int = None,
+    start: int = 1,
+    scale_factor_first_point: float = 1.0,
+    fill_outside_one: bool = False,
+    invert_window: bool = False,
+    # Aliases
+    g1: float = None,
+    g2: float = None,
+    g3: float = None,
+    size: int = None,
+    c: float = None,
+    one: bool = None,
+    inv: bool = None,
+) -> NMRData:
+    """
+    Apply a Lorentz-to-Gauss apodization (window) to the last dimension of the data.
+
+    Args:
+        data (NMRData): Input data.
+        inv_exp_width (float): Inverse exponential width (default 0.0).
+        broaden_width (float): Broadening width for Gaussian function (default 0.0).
+        center (float): Center point of the Gaussian function (default 0.0).
+        size_window (int, optional): Number of points in the window (default: size of last axis).
+        start (int): Index to start applying the window (default 1 = first point).
+        scale_factor_first_point (float): Scaling for the first point (default 1.0).
+        fill_outside_one (bool): If True, data outside window is multiplied by 1.0 instead of 0.0.
+        invert_window (bool): If True, apply 1/window instead of window and 1/scale_factor_first_point.
+
+    Aliases:
+        g1: Alias for inv_exp_width
+        g2: Alias for broaden_width
+        g3: Alias for center
+        size: Alias for size_window
+        c: Alias for scale_factor_first_point
+        one: Alias for fill_outside_one
+        inv: Alias for invert_window
+
+    Returns:
+        NMRData: Data after Lorentz-to-Gauss apodization.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle argument aliases
+    if g1 is not None: inv_exp_width = g1
+    if g2 is not None: broaden_width = g2
+    if g3 is not None: center = g3
+    if size is not None: size_window = size
+    if c is not None: scale_factor_first_point = c
+    if one is not None: fill_outside_one = one
+    if inv is not None: invert_window = inv
+    
+    if size_window is None:
+        size_window = int(data.shape[-1])
+    
+    sw = data.axes[-1].get("SW", None)
+    if sw is None:
+        raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    
+    # Create window
+    t = np.arange(size_window)
+    npoints = data.shape[-1]
+    center_index = int(center * (npoints - 1))
+    
+    exp_component = np.exp((np.pi * t * inv_exp_width) / sw)
+    gauss_component = np.exp(
+        -((0.6 * np.pi * broaden_width * (center_index - t)) ** 2)
+    )
+    window = (exp_component * gauss_component).astype(data.dtype)
+    
+    # Invert window if necessary
+    if invert_window:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            inv_window = np.zeros_like(window)
+            mask = window != 0
+            inv_window[mask] = 1.0 / window[mask]
+            window = inv_window
+            
+        if scale_factor_first_point != 0.0:
+            scale_factor_first_point = 1.0 / scale_factor_first_point
+        else:
+            scale_factor_first_point = 1.0
+    
+    # Create zeroes array to insert window function into
+    full_window = np.zeros_like(data)
+    
+    if start - 1 >= npoints:
+        raise ValueError(f"Start point {start} is beyond data size {npoints}.")
+    
+    # Clip window if it extends past the data length
+    end_point = min((start - 1) + size_window, npoints)
+    clip_size = end_point - (start - 1)
+    
+    # Insert window into array
+    full_window[..., start-1:end_point] = window[:clip_size]
+    
+    # Multiply poitns outside the window range by 1
+    if fill_outside_one:
+        mask = full_window == 0
+        full_window[mask] = 1.0
+    
+    # Apply window
+    result = data * full_window
+    
+    # Scale first point
+    if scale_factor_first_point != 1.0:
+        result[..., start - 1] *= scale_factor_first_point
+    
+    
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append({
+        'Function': "Apodization: Lorentz-to-Gauss window",
+        'inv_exp_width': inv_exp_width,
+        'broaden_width': broaden_width,
+        'center': center,
+        'size_window': size_window,
+        'start': start,
+        'scale_factor_first_point': scale_factor_first_point,
+        'fill_outside_one': fill_outside_one,
+        'invert_window': invert_window,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+    
+    return result
+
+# NMRPipe alias
+GM = lorentz_to_gauss_window
+GM.__doc__ = lorentz_to_gauss_window.__doc__  # Auto-generated
+GM.__name__ = "GM"  # Auto-generated
+
+
 
 def zero_fill(
     data: NMRData,
