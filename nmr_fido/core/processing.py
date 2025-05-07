@@ -1750,3 +1750,33 @@ def delete_imaginaries(data: NMRData) -> NMRData:
 DI = delete_imaginaries
 DI.__doc__ = delete_imaginaries.__doc__  # Auto-generated
 DI.__name__ = "DI"  # Auto-generated
+
+
+def null(data: NMRData) -> NMRData:
+    """
+    Leave data unchanged.
+
+    Args:
+        data (NMRData): Input data.
+
+    Returns:
+        NMRData: Unchagned NMRData.
+    """
+    start_time = time.perf_counter()
+    
+    result = data.copy()
+    
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append(
+        {
+            'Function': "Null",
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        }
+    )
+    return result
+
+# NMRPipe alias
+NULL = null
+NULL.__doc__ = null.__doc__  # Auto-generated
+NULL.__name__ = "NULL"  # Auto-generated
