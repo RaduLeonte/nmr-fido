@@ -4,15 +4,6 @@ import nmrglue as ng
 from pprint import pprint
 import matplotlib.pyplot as plt
 import time
-from typing import Callable, Any
-
-def time_function(func: Callable, *args, **kwargs) -> Any:
-    start_time = time.perf_counter()
-    result = func(*args, **kwargs)
-    end_time = time.perf_counter()
-    duration = end_time - start_time
-    print(f"Function {func.__name__} executed in {duration:.6f} seconds")
-    return result
 
 
 dic, data = ng.pipe.read("tests/test.fid")

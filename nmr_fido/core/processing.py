@@ -75,6 +75,8 @@ def solvent_filter(
     filter_mode: str = "Low Pass",
     lowpass_size: int = 16,
     lowpass_shape: str = "Boxcar",
+    butter_ord: int = 4,
+    butter_cutoff: float = 0.05,
     poly_ext_order: int = 2,
     spline_noise: float = 1.0,
     smooth_factor: float = 1.1,
@@ -137,12 +139,23 @@ def solvent_filter(
                 
                 case "Sine^2":
                     filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width)) ** 2
+                    
+                case "Butterworth":
+                    b, a = signal.butter(butter_ord, butter_cutoff, btype='low', analog=False)
             
             if filter is not None:
                 for index in np.ndindex(sliced_data.shape[:-1]):
                     fid = sliced_data[index]
                     # Apply convolution
                     filtered_fid = signal.convolve(fid, filter, mode="same") / filter_width
+                    # Subtract the filtered signal from the original
+                    sliced_data[index] = fid - filtered_fid
+                    
+            elif lowpass_shape == "Butterworth":
+                for index in np.ndindex(sliced_data.shape[:-1]):
+                    fid = sliced_data[index]
+                    # Apply Butterworth filter
+                    filtered_fid = signal.filtfilt(b, a, fid)
                     # Subtract the filtered signal from the original
                     sliced_data[index] = fid - filtered_fid
 
