@@ -16,6 +16,7 @@ from .core.processing import (
     delete_imaginaries, DI,
     null, NULL,
     reverse, REV,
+    right_shift, RS,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "delete_imaginaries", "DI",
     "null", "NULL",
     "reverse", "REV",
+    "right_shift", "RS",
 ]

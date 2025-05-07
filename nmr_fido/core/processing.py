@@ -1857,3 +1857,94 @@ def reverse(
 REV = reverse
 REV.__doc__ = reverse.__doc__  # Auto-generated
 REV.__name__ = "REV"  # Auto-generated
+
+
+def right_shift(
+    data: NMRData,
+    *,
+    shift_amount: int = 0,
+    adjust_spectral_width: bool = True,
+    # Aliases
+    rs: int = None,
+    sw: bool = None,
+) -> NMRData:
+    """
+    Apply a right shift and zero pad to the data in the last dimension.
+
+    Args:
+        data (NMRData): Input NMR dataset.
+        shift_amount (int): Number of points to shift. Positive for right shift, negative for left shift.
+        adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
+        
+    Aliases:
+        rs: Alias for shift_amount.
+        sw: Alias for adjust_spectral_width.
+
+    Returns:
+        NMRData: Data after applying right shift and zero padding.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle aliases
+    if rs is not None: shift_amount = rs
+    if sw is not None: adjust_spectral_width = sw
+    
+    dim = -1 
+    npoints = data.shape[dim]
+    shift_points = int(np.round(shift_amount))
+    
+    shift_points = max(min(shift_points, npoints), -npoints)
+    
+    shifted_data = np.zeros_like(data)
+    if shift_points > 0:
+        shifted_data[..., shift_points:] = data[..., :-shift_points]
+    
+    elif shift_points < 0:
+        shifted_data[..., :shift_points] = data[..., -shift_points:]
+    
+    else:
+        shifted_data = data.copy()
+    
+    new_data = NMRData(shifted_data, copy_from=data)
+    
+    if adjust_spectral_width:
+        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+        axis_unit = data.axes[dim].get("unit", "pts")
+        
+        point_shift = sw / npoints
+
+        
+        # Adjust ORI based on shift
+        if axis_unit == "pts":
+            new_ori = ori - (point_shift * shift_points)
+        else:
+            # Recalculate ppm scale
+            ppm_scale = get_ppm_scale(npoints, sw, ori, obs)
+            new_ppm_scale = np.roll(ppm_scale, shift_points)
+            new_ori = obs * new_ppm_scale[0]
+
+        # Update axis dictionary
+        new_axis_dict = data.axes[dim].copy()
+        new_axis_dict['SW'] = sw  # SW remains unchanged
+        new_axis_dict['ORI'] = new_ori
+        new_axis_dict['OBS'] = obs  # OBS remains unchanged
+        new_axis_dict['scale'] = np.roll(new_axis_dict['scale'], shift_points)
+
+        new_data.axes[dim] = new_axis_dict
+
+
+    elapsed = time.perf_counter() - start_time
+    new_data.processing_history.append({
+        'Function': "Right shift data",
+        'shift_amount': shift_amount,
+        'adjusted_sw': adjust_spectral_width,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return new_data
+
+# NMRPipe alias
+RS = right_shift
+RS.__doc__ = right_shift.__doc__  # Auto-generated
+RS.__name__ = "RS"  # Auto-generated
