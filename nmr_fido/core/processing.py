@@ -192,6 +192,13 @@ SOL.__name__ = "SOL"  # Auto-generated
 def linear_prediction(
     data: NMRData,
     *,
+    prediction_size: int = -1,
+    fit_start: int = 0,
+    fit_end: int = -1,
+    order: int = 8,
+    direction: str = "forward",
+    use_root_fixing: bool = False,
+    root_fix_mode: int = "suppress_increasing",
     # Aliases
     pred: int = None,
     x1: int = None,
@@ -221,8 +228,43 @@ def linear_prediction(
     Returns:
         NMRData: .
     """
+    # Handle argument aliases
+    if pred is not None: prediction_size = pred
+    if x1 is not None: fit_start = x1
+    if xn is not None: fit_end = xn
+    if ord is not None: order = ord
+    if f: direction = "forward"
+    if b: direction = "backward"
+    if fb: direction = "both"
+    if before is not None: direction = "backward"
+    if after is not None: direction = "forward"
+    if nofix: use_root_fixing = False
+    if fix: use_root_fixing = True
+    if fixMode is not None: root_fix_mode = {-1: "suppress_decreasing", 0: None, 1: "suppress_increasing"}[fixMode]
+    
+    
+    result = data.copy()
+    npoints = result.shape[-1]
+    
+    if order >= npoints/2:
+        raise ValueError(f"Number of coefficients ({order=}) must be less than half the number of points in the vector ({npoints=})")
+    
+    if prediction_size == -1: prediction_size = npoints
+    
+    fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
+    fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
+    
+    
+    def fit_coeff(vector: np.ndarray) -> np.ndarray:
+        x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
+        y_fit = vector[fit_start_idx:fit_end_idx + 1]
+        
+        coeff = None
+        
+        return coeff
     
     raise NotImplementedError
+
     
     result = data
     
