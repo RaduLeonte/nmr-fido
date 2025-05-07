@@ -2,35 +2,38 @@ import nmrglue as ng
 import numpy as np
 from pprint import pprint
 import matplotlib.pyplot as plt
+import time
+
 
 dic, data = ng.pipe.read("tests/test.fid")
 
-print(data.shape)
 
 
-keys = ["LABEL", "SW", "CAR", "OBS", "ORIG"]
+keys = ["FDF1", "FDF2"]
 filt_dic = dic.copy()
 filt_dic = {k:v for k,v in filt_dic.items() if any(key in k for key in keys)}
+#pprint(filt_dic)
 
-
+start_time = time.perf_counter()
 # process the direct dimension
-#dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.98, pow=1, c=1.0)
-dic, data = ng.pipe_proc.zf(dic, data, auto=True)
-dic, data = ng.pipe_proc.ft(dic, data, auto=True)
-dic, data = ng.pipe_proc.ps(dic, data, p0=-29.0, p1=0.0)
-dic, data = ng.pipe_proc.di(dic, data)
-print("After x FT", data.shape)
+dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.98, pow=1, c=1.0) # 3.18250001873821 ms
+dic, data = ng.pipe_proc.zf(dic, data, auto=True) # 9.909600019454956 ms
+dic, data = ng.pipe_proc.ft(dic, data, auto=True) # 29.63499998440966 ms
+dic, data = ng.pipe_proc.ps(dic, data, p0=-29.0, p1=0.0) # 8.634899975731969 ms
+dic, data = ng.pipe_proc.di(dic, data) # 0.05540001438930631 ms
 
-dic, data = ng.pipe_proc.tp(dic, data)
-print("After TP", data.shape)
+dic, data = ng.pipe_proc.tp(dic, data) # 11.297399993054569 ms
 
-#dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.9, pow=1, c=0.5)
-#dic, data = ng.pipe_proc.zf(dic, data, size=2048)
-dic, data = ng.pipe_proc.ft(dic, data, auto=True, debug=False)
-#dic, data = ng.pipe_proc.ps(dic, data, p0=0.0, p1=0.0)
-#dic, data = ng.pipe_proc.di(dic, data)
+dic, data = ng.pipe_proc.sp(dic, data, off=0.35, end=0.9, pow=1, c=0.5) # 4.255299980286509 ms
+dic, data = ng.pipe_proc.zf(dic, data, size=2048) # 67.57319997996092 ms
+dic, data = ng.pipe_proc.ft(dic, data, auto=True, debug=False) # 179.58789999829605 ms
+dic, data = ng.pipe_proc.ps(dic, data, p0=0.0, p1=0.0) # 51.987099985126406 ms
+dic, data = ng.pipe_proc.di(dic, data) # 0.022499996703118086 ms
 
-dic, data = ng.pipe_proc.tp(dic, data)
+start_time_func = time.perf_counter() 
+dic, data = ng.pipe_proc.tp(dic, data) # 0.18179998733103275 ms
+print(f" # {(time.perf_counter() - start_time_func)*1000} ms")
+print(f"--- Done! Elapsed: {time.perf_counter() - start_time:.3f} s", "\n")
 
 # write out processed data
 #ng.pipe.write("2d_pipe.ft2", dic, data, overwrite=True)
@@ -52,8 +55,6 @@ contour_factor = 1.10          # scaling factor between contour levels
 cl = contour_start * contour_factor ** np.arange(contour_num)
 limits_x = (ppm_13c_0, ppm_13c_1)
 limits_y = (ppm_15n_0, ppm_15n_1)
-print(limits_x)
-print(limits_y)
 ax.contour(
     data,
     cl,
