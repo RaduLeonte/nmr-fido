@@ -35,7 +35,7 @@ def _convert_to_index(
             raise ValueError(f"Could not parse value: {value}")
         
         # Get correct scale for the specified dimension
-        scale = data.scales[dim]
+        scale = data.axes[dim]["scale"]
 
         if "ppm" in value.lower() or "hz" in value.lower():
             idx = np.argmin(np.abs(scale - number))
