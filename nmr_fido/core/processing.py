@@ -2099,3 +2099,118 @@ def circular_shift(
 CS = circular_shift
 CS.__doc__ = circular_shift.__doc__  # Auto-generated
 CS.__name__ = "CS"  # Auto-generated
+
+
+def manipulate_sign(
+    data: NMRData,
+    *,
+    negate_all: bool = False,
+    negate_reals: bool = False,
+    negate_imaginaries: bool = False,
+    negate_left_half: bool = False,
+    negate_right_half: bool = False,
+    alternate_sign: bool = False,
+    absolute_value: bool = False,
+    replace_with_sign: bool = False,
+    # Aliases
+    ri: bool = None,
+    r: bool = None,
+    i: bool = None,
+    left: bool = None,
+    right: bool = None,
+    alt: bool = None,
+    abs: bool = None,
+    sign: bool = None,
+) -> NMRData:
+    """
+    Apply various sign manipulations to the NMR data.
+
+    Args:
+        data (NMRData): Input NMR dataset.
+        negate_all (bool): Negate the entire dataset.
+        negate_reals (bool): Negate only the real part of the data.
+        negate_imaginaries (bool): Negate only the imaginary part of the data.
+        negate_left_half (bool): Negate the left half of the data.
+        negate_right_half (bool): Negate the right half of the data.
+        alternate_sign (bool): Alternate sign for each point.
+        absolute_value (bool): Apply absolute value to the entire dataset.
+        replace_with_sign (bool): Replace each value with its sign (+1, 0, -1).
+
+    Aliases:
+        ri: Alias for negate_all.
+        r: Alias for negate_reals.
+        i: Alias for negate_imaginaries.
+        left: Alias for negate_left_half.
+        right: Alias for negate_right_half.
+        alt: Alias for alternate_sign.
+        abs: Alias for absolute_value.
+        sign: Alias for replace_with_sign.
+
+    Returns:
+        NMRData: Data after sign manipulation.
+    """
+    start_time = time.perf_counter()
+    
+    # Handle aliases
+    if ri is not None: negate_all = ri
+    if r is not None: negate_reals = r
+    if i is not None: negate_imaginaries = i
+    if left is not None: negate_left_half = left
+    if right is not None: negate_right_half = right
+    if alt is not None: alternate_sign = alt
+    if abs is not None: absolute_value = abs
+    if sign is not None: replace_with_sign = sign
+    
+    result = data.copy()
+    npoints = result.shape[-1]
+
+    if negate_all:
+        result *= -1
+
+    if negate_reals:
+        result.real *= -1
+
+    if negate_imaginaries:
+        result.imag *= -1
+
+    if negate_left_half:
+        midpoint = npoints // 2
+        result[..., :midpoint] *= -1
+
+    if negate_right_half:
+        midpoint = npoints // 2
+        result[..., midpoint:] *= -1
+
+    if alternate_sign:
+        sign_pattern = np.ones(npoints)
+        sign_pattern[1::2] = -1 
+        result *= sign_pattern
+
+    if absolute_value:
+        result = np.abs(result)
+
+    # Replace each value with its sign (+1, 0, -1)
+    if replace_with_sign:
+        result = np.sign(result)
+
+    elapsed = time.perf_counter() - start_time
+    result.processing_history.append({
+        'Function': "Sign manipulation",
+        'negate_all': negate_all,
+        'negate_reals': negate_reals,
+        'negate_imaginaries': negate_imaginaries,
+        'negate_left_half': negate_left_half,
+        'negate_right_half': negate_right_half,
+        'alternate_sign': alternate_sign,
+        'absolute_value': absolute_value,
+        'replace_with_sign': replace_with_sign,
+        'time_elapsed_s': elapsed,
+        'time_elapsed_str': _format_elapsed_time(elapsed),
+    })
+
+    return result
+
+# NMRPipe alias
+SIGN = manipulate_sign
+SIGN.__doc__ = manipulate_sign.__doc__  # Auto-generated
+SIGN.__name__ = "SIGN"  # Auto-generated
