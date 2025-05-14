@@ -70,6 +70,22 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
     return result
 
 
+def _lowpass_filter_safe(fid: np.ndarray | NMRData, filt: np.array) -> np.ndarray | NMRData:
+    # Half filter width
+    K = len(filt) // 2
+
+    # Pad signal edges by reflection to avoid wrap-around artifacts
+    padded = np.pad(fid, (K, K), mode='reflect')
+
+    # Convolve with filter on padded data, 'valid' mode returns filtered signal matching original length
+    conv = signal.convolve(padded, filt, mode='valid')
+
+    # Normalize by sum of filter coefficients to preserve amplitude scale
+    conv /= filt.sum()
+
+    return conv
+
+
 def solvent_filter(
     data: NMRData,
     *,
@@ -141,19 +157,19 @@ def solvent_filter(
             sponds to the number of time-domain data points that are averaged. This low-fre-
             quency component is then subtracted from the original signal (Fig. 1B)."
             """
-            filter = None
+            filter_kernel = None
             match lowpass_shape:
                 case "Boxcar":
-                    filter = np.ones(filter_width, dtype=np.float32)
+                    filter_kernel = np.ones(filter_width, dtype=np.float32)
                 
                 case "Sine":
-                    filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width))
+                    filter_kernel = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width))
                 
                 case "Sine^2":
-                    filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width)) ** 2
+                    filter_kernel = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width)) ** 2
                     
                 case "Gaussian":
-                    filter = np.exp(-4 * (np.linspace(-0.5, 0.5, filter_width)**2) / (0.5**2))
+                    filter_kernel = np.exp(-4 * (np.linspace(-0.5, 0.5, filter_width)**2) / (0.5**2))
                     
                 case "Butterworth":
                     b, a = signal.butter(butter_ord, butter_cutoff, btype='low', analog=False)
@@ -161,20 +177,23 @@ def solvent_filter(
                 case _:
                     raise ValueError(f"Unknown lowpass_shape: {lowpass_shape}")
             
-            # Apply convolution which uses the shape of the lowpass filter to "select"
-            # specific frequencies, usually the solvent frequencies
-            apply_filter = lambda fid: signal.convolve(fid, filter, mode="same") / filter_width
-            if filter is None and lowpass_shape == "Butterworth":
-                # Butter worth filter needs to be applied forwards and backwards so use signal.filtfilt
-                apply_filter = lambda fid: signal.filtfilt(b, a, fid)
-            
-            
-            for index in np.ndindex(sliced_data.shape[:-1]):
-                fid = sliced_data[index]
+            if filter_kernel is not None:
+                # FIR filter via convolution with safe padding
+                for index in np.ndindex(sliced_data.shape[:-1]):
+                    fid = sliced_data[index]
+                    filtered_fid = _lowpass_filter_safe(fid, filter_kernel)
+                    sliced_data[index] = fid - filtered_fid
 
-                # Subtract the "selected" signal from the original to remove the solvent
-                sliced_data[index] = fid - apply_filter(fid)
-            pass
+            elif lowpass_shape == "Butterworth":
+                # IIR Butterworth filter applied forwards and backwards
+                for index in np.ndindex(sliced_data.shape[:-1]):
+                    fid = sliced_data[index]
+                    filtered_fid = signal.filtfilt(b, a, fid)
+                    sliced_data[index] = fid - filtered_fid
+
+            else:
+                pass
+
         
         case "Spline":
             raise NotImplementedError("Spline filter mode not implemented yet.")

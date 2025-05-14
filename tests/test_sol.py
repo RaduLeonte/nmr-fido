@@ -67,7 +67,7 @@ no_SOL = nf.FT(data)
 boxcar = nf.FT(nf.SOL(data))
 sine = nf.FT(nf.SOL(data, lowpass_shape="Sine"))
 sine2 = nf.FT(nf.SOL(data, lowpass_shape="Sine^2"))
-gauss = nf.FT(nf.SOL(data, lowpass_shape="Gaussian", lowpass_size=60))
+gauss = nf.FT(nf.SOL(data, lowpass_shape="Gaussian"))
 butter = nf.FT(nf.SOL(data, lowpass_shape="Butterworth"))
 
 no_SOL.scale_to_hz()
