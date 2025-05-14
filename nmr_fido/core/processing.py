@@ -148,14 +148,20 @@ def solvent_filter(
         case "Low Pass":
             """
             More info on how these work:
-            Marion et al. 1989 -> DOI: 0.1016/0022-2364(89)90391-0
             
-            "The residual H20 signal is responsible for the low-frequency component
-            of the signal. To a good approximation, this low-frequency component of the FID
-            can be calculated by averaging neighboring time-domain data points, which is equiv-
-            alent to convolution with a rectangular function. The width of the rectangle corre-
-            sponds to the number of time-domain data points that are averaged. This low-fre-
-            quency component is then subtracted from the original signal (Fig. 1B)."
+            Overview:
+            Cross 1996 -> DOI: https://doi.org/10.1016/S0922-3487(96)80043-8
+            
+            Gaussian filter:
+            Marion et al. 1989 -> DOI: https://doi.org/10.1016/0022-2364(89)90391-0
+            
+            From Marion et al.:
+                "The residual H20 signal is responsible for the low-frequency component
+                of the signal. To a good approximation, this low-frequency component of the FID
+                can be calculated by averaging neighboring time-domain data points, which is equiv-
+                alent to convolution with a rectangular function. The width of the rectangle corre-
+                sponds to the number of time-domain data points that are averaged. This low-fre-
+                quency component is then subtracted from the original signal (Fig. 1B)."
             """
             filter_kernel = None
             match lowpass_shape:
@@ -199,6 +205,11 @@ def solvent_filter(
             raise NotImplementedError("Spline filter mode not implemented yet.")
         
         case "Polynomial":
+            """
+            Possible implementation:
+            
+            Bielecki and Levitt 1989 -> https://doi.org/10.1016/0022-2364(89)90218-7
+            """
             raise NotImplementedError("Polynomial filter mode not implemented yet.")
         
         
