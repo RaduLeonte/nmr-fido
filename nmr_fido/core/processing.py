@@ -130,6 +130,17 @@ def solvent_filter(
 
     match filter_mode:
         case "Low Pass":
+            """
+            More info on how these work:
+            Marion et al. 1989 -> DOI: 0.1016/0022-2364(89)90391-0
+            
+            "The residual H20 signal is responsible for the low-frequency component
+            of the signal. To a good approximation, this low-frequency component of the FID
+            can be calculated by averaging neighboring time-domain data points, which is equiv-
+            alent to convolution with a rectangular function. The width of the rectangle corre-
+            sponds to the number of time-domain data points that are averaged. This low-fre-
+            quency component is then subtracted from the original signal (Fig. 1B)."
+            """
             filter = None
             match lowpass_shape:
                 case "Boxcar":
@@ -141,32 +152,39 @@ def solvent_filter(
                 case "Sine^2":
                     filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width)) ** 2
                     
+                case "Gaussian":
+                    filter = np.exp(-4 * (np.linspace(-0.5, 0.5, filter_width)**2) / (0.5**2))
+                    
                 case "Butterworth":
                     b, a = signal.butter(butter_ord, butter_cutoff, btype='low', analog=False)
-            
-            if filter is not None:
-                for index in np.ndindex(sliced_data.shape[:-1]):
-                    fid = sliced_data[index]
-                    # Apply convolution
-                    filtered_fid = signal.convolve(fid, filter, mode="same") / filter_width
-                    # Subtract the filtered signal from the original
-                    sliced_data[index] = fid - filtered_fid
                     
-            elif lowpass_shape == "Butterworth":
-                for index in np.ndindex(sliced_data.shape[:-1]):
-                    fid = sliced_data[index]
-                    # Apply Butterworth filter
-                    filtered_fid = signal.filtfilt(b, a, fid)
-                    # Subtract the filtered signal from the original
-                    sliced_data[index] = fid - filtered_fid
+                case _:
+                    raise ValueError(f"Unknown lowpass_shape: {lowpass_shape}")
+            
+            # Apply convolution which uses the shape of the lowpass filter to "select"
+            # specific frequencies, usually the solvent frequencies
+            apply_filter = lambda fid: signal.convolve(fid, filter, mode="same") / filter_width
+            if filter is None and lowpass_shape == "Butterworth":
+                # Butter worth filter needs to be applied forwards and backwards so use signal.filtfilt
+                apply_filter = lambda fid: signal.filtfilt(b, a, fid)
+            
+            
+            for index in np.ndindex(sliced_data.shape[:-1]):
+                fid = sliced_data[index]
 
+                # Subtract the "selected" signal from the original to remove the solvent
+                sliced_data[index] = fid - apply_filter(fid)
             pass
         
         case "Spline":
-            raise NotImplementedError
+            raise NotImplementedError("Spline filter mode not implemented yet.")
         
         case "Polynomial":
-            raise NotImplementedError
+            raise NotImplementedError("Polynomial filter mode not implemented yet.")
+        
+        
+        case _:
+            raise ValueError(f"Unknown filter mode: {filter_mode}")
 
 
     result[..., skip_points:] = sliced_data
