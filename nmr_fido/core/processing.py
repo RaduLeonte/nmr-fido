@@ -242,8 +242,8 @@ def linear_prediction(
     data: NMRData,
     *,
     prediction_size: int = -1,
-    fit_start: int = 0,
-    fit_end: int = -1,
+    pred_start: int = 0,
+    pred_end: int = -1,
     order: int = 8,
     direction: str = "forward",
     use_root_fixing: bool = False,
@@ -279,8 +279,8 @@ def linear_prediction(
     """
     # Handle argument aliases
     if pred is not None: prediction_size = pred
-    if x1 is not None: fit_start = x1
-    if xn is not None: fit_end = xn
+    if x1 is not None: pred_start = x1
+    if xn is not None: pred_end = xn
     if ord is not None: order = ord
     if f: direction = "forward"
     if b: direction = "backward"
@@ -300,17 +300,55 @@ def linear_prediction(
     
     if prediction_size == -1: prediction_size = npoints
     
-    fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
-    fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
+    pred_start_idx = _convert_to_index(result, pred_start, npoints, default=0)
+    pred_end_idx = _convert_to_index(result, pred_end, npoints, default=npoints - 1)
     
     
     def fit_coeff(vector: np.ndarray) -> np.ndarray:
-        x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
-        y_fit = vector[fit_start_idx:fit_end_idx + 1]
+        y_fit = vector[pred_start_idx:pred_end_idx + 1]
         
-        coeff = None
+        K = order
+        n = len(y_fit) - order
         
-        return coeff
+        """
+        q1*x0      + q2*x1  + q3*x2      + ... + qK*x_{K-1}   = x_K
+        q1*x1      + q2*x2  + q3*x3      + ... + qK*x_K       = x_{K+1}
+        q1*x2      + q2*x3  + q3*x4      + ... + qK*x_{K+1}   = x_{K+2}
+        
+          ⋮
+        
+        q1*x_{n-1} + q2*x_n + q3*x_{n+1} + ... + qK*x_{n+K-2} = x_{n+K-1}
+        """
+        M = np.array([y_fit[i : i + K] for i in range(n)])
+        
+        r = y_fit[K : K + n]
+        
+        coeffs, residuals, rank, s = np.linalg.lstsq(M, r, rcond=None)
+        
+        return coeffs
+    
+    # Predict points
+    original_shape = result.shape
+    new_shape = original_shape[:-1] + [original_shape[-1] + prediction_size]
+    predicted_data = np.zeros(new_shape)
+    pred_index = npoints
+    
+    fid_length = len(fid)
+    
+    for index in np.ndindex(result.shape[:-1]):
+        fid = np.array(result[index])
+        coeffs = fit_coeff(fid)
+        
+        predicted_fid = np.zeros(fid_length + prediction_size)
+        predicted_fid[:fid_length] = fid
+        
+        for i in range(prediction_size):
+            # Get previous N points (order)
+            prev_points = predicted_fid[i + fid_length - order : i + fid_length]
+            
+            predicted_fid[len(fid) + i] = np.dot(coeffs, prev_points)
+            
+        predicted_data[index] = predicted_fid
     
     raise NotImplementedError
 
