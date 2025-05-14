@@ -1,10 +1,11 @@
-import time
+from time import perf_counter
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
 from nmr_fido.utils import _convert_to_index, get_ppm_scale
 from scipy.signal import hilbert
-from scipy import signal
+from scipy import signal, odr
+from scipy.optimize import curve_fit
 
 
 def _format_elapsed_time(elapsed: float) -> str:
@@ -108,7 +109,7 @@ def solvent_filter(
     Returns:
         NMRData: .
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if mode is not None: filter_mode = {1: "Low Pass", 2: "Spline", 3: "Polynomial"}[mode]
@@ -132,7 +133,7 @@ def solvent_filter(
             filter = None
             match lowpass_shape:
                 case "Boxcar":
-                    filter = np.ones(filter_width, float)
+                    filter = np.ones(filter_width, dtype=np.float32)
                 
                 case "Sine":
                     filter = np.cos(np.pi * np.linspace(-0.5, 0.5, filter_width))
@@ -170,7 +171,7 @@ def solvent_filter(
 
     result[..., skip_points:] = sliced_data
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Solvent filter",
@@ -372,7 +373,7 @@ def sine_bell_window(
     Returns:
         NMRData: Data after applying sine-bell apodization.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if off is not None: start_angle = off
@@ -404,7 +405,7 @@ def sine_bell_window(
         fill_outside_one
     )
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Apodization: Sine bell window",
@@ -475,7 +476,7 @@ def lorentz_to_gauss_window(
     Returns:
         NMRData: Data after Lorentz-to-Gauss apodization.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if g1 is not None: inv_exp_width = g1
@@ -514,7 +515,7 @@ def lorentz_to_gauss_window(
     )
     
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append({
         'Function': "Apodization: Lorentz-to-Gauss window",
         'inv_exp_width': inv_exp_width,
@@ -575,7 +576,7 @@ def exp_mult_window(
     Returns:
         NMRData: Data after applying exponential multiply apodization.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if lb is not None: line_broadening = lb
@@ -608,7 +609,7 @@ def exp_mult_window(
     )
     
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append({
         'Function': "Apodization: Exponential multiply window",
         'line_broadening': line_broadening,
@@ -658,7 +659,7 @@ def zero_fill(
     Returns:
         NMRData: Zero-filled NMRData.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if zf is not None: factor = zf
@@ -711,7 +712,7 @@ def zero_fill(
     result.axes[-1]["scale"] = np.arange(new_last_dim)
     
     # Update processing history
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Zero filling",
@@ -767,7 +768,7 @@ def fourier_transform(
     Returns:
         NMRData: Fourier transformed data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if real is not None: real_only = real
@@ -835,7 +836,7 @@ def fourier_transform(
     result.scale_to_ppm()
 
     # Update metadata
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': 'Complex fourier transform',
@@ -887,7 +888,7 @@ def hilbert_transform(
     Returns:
         NMRData: Hilbert transformed data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if ps90_180 is not None: mirror_image = ps90_180
@@ -929,7 +930,7 @@ def hilbert_transform(
     result = NMRData(result_array, copy_from=data)
     
     # Update metadata
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': 'Hilbert transform',
@@ -997,7 +998,7 @@ def phase(
         NMRData: Data after applying phase correction.
     """
     # TO DO: Implement time domain phase correction
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle argument aliases
     if inv is not None: invert = inv
@@ -1038,7 +1039,7 @@ def phase(
     if temporary_zero_fill:
         result_array = result_array[..., :original_shape[-1]]
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Phase Correction",
@@ -1117,7 +1118,7 @@ def extract_region(
     Returns:
         NMRData: Extracted region of the input data, optionally with updated spectral calibration.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if left is not None: left_half = left
@@ -1206,7 +1207,7 @@ def extract_region(
         new_data.axes[dim] = new_axis_dict
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     new_data.processing_history.append({
         'Function': "Extract Region",
         'start_x': start_idx,
@@ -1336,7 +1337,7 @@ def polynomial_baseline_correction(
         NMRData: Data after applying polynomial baseline correction.
     """
     # TO DO: Implement missing arguments
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Switch domain
     if time is not None: domain = "time"
@@ -1392,7 +1393,7 @@ def polynomial_baseline_correction(
         # Apply correction along the last axis
         corrected_data = np.apply_along_axis(fit_and_subtract, axis=-1, arr=data)
         
-        elapsed = time.perf_counter() - start_time
+        elapsed = perf_counter() - start_time
         corrected_data.processing_history.append(
             {
                 'Function': "Time domain polynomial baseline correction",
@@ -1458,6 +1459,13 @@ def polynomial_baseline_correction(
         fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
         fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
         
+        def poly_model(x, *coeffs):
+            # coeffs are in descending order: c0*x^order + c1*x^(order-1) + ...
+            order = len(coeffs) - 1
+            y = np.zeros_like(x, dtype=np.float64)
+            for i, c in enumerate(coeffs):
+                y += c * x ** (order - i)
+            return y
         
         def fit_and_subtract(vector: np.ndarray) -> np.ndarray:
             if node_groups:
@@ -1468,14 +1476,26 @@ def polynomial_baseline_correction(
                 x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
                 y_fit = vector[fit_start_idx:fit_end_idx + 1]
             
-            if len(x_fit) < order + 1:
+            threshold = float(np.median(y_fit) + 1 * np.std(y_fit))
+            print(f"{threshold=}")
+            mask = y_fit < threshold
+            
+            x_fit_masked = x_fit[mask]
+            y_fit_masked = y_fit[mask]
+            
+            if len(x_fit_masked) < order + 1:
                 return vector
             
             # Subtraction range
-            x_subtract = np.arange(sub_start_idx, sub_end_idx + 1)
+            x_subtract = np.arange(sub_start_idx, sub_end_idx + 1).astype(np.float64)
+
+        
+            p0 = np.ones(order + 1)
+            coeffs, _ = curve_fit(poly_model, x_fit_masked, y_fit_masked, p0=p0)
+
+            print(list(coeffs))
             
-            coeffs = np.polyfit(x_fit, y_fit, order)
-            baseline = np.polyval(coeffs, x_subtract)
+            baseline = poly_model(x_subtract, *coeffs)
             
             corrected = vector.copy()
             corrected[sub_start_idx:sub_end_idx + 1] -= baseline
@@ -1484,7 +1504,7 @@ def polynomial_baseline_correction(
         
         corrected_data = np.apply_along_axis(lambda v: fit_and_subtract(v), axis=-1, arr=data)
         
-        elapsed = time.perf_counter() - start_time
+        elapsed = perf_counter() - start_time
         corrected_data.processing_history.append(
             {
                 'Function': "Frequency domain polynomial baseline correction",
@@ -1536,7 +1556,7 @@ def transpose(
     Returns:
         NMRData: Transposed data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
 
     if axes:
         axes = axes[0]
@@ -1567,7 +1587,7 @@ def transpose(
         result.axes[-1]["interleaved_data"] = False
 
     # Record processing history
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Transpose",
@@ -1627,7 +1647,7 @@ def add_constant(
     Returns:
         NMRData: Adjusted data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if r is not None: constant_real = r
@@ -1686,7 +1706,7 @@ def add_constant(
     result = NMRData(array, copy_from=data)
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Add constant",
@@ -1744,7 +1764,7 @@ def multiply_constant(
     Returns:
         NMRData: Adjusted data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if r is not None: constant_real = r
@@ -1803,7 +1823,7 @@ def multiply_constant(
     result = NMRData(array, copy_from=data)
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Multiply constant",
@@ -1861,7 +1881,7 @@ def set_to_constant(
     Returns:
         NMRData: Adjusted data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if r is not None: constant_real = r
@@ -1913,7 +1933,7 @@ def set_to_constant(
     result = NMRData(array, copy_from=data)
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Set to constant",
@@ -1945,7 +1965,7 @@ def delete_imaginaries(data: NMRData) -> NMRData:
     Returns:
         NMRData: Real-valued data.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
 
     # Take the real part only
     real_data = np.real(data).copy()
@@ -1954,7 +1974,7 @@ def delete_imaginaries(data: NMRData) -> NMRData:
     result = NMRData(real_data, copy_from=data)
 
     # Record processing history
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append({
         'Function': "Delete imaginary part",
         'imag_removed': True,
@@ -1982,11 +2002,11 @@ def null(data: NMRData) -> NMRData:
     Returns:
         NMRData: Unchagned NMRData.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     result = data.copy()
     
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append(
         {
             'Function': "Null",
@@ -2022,7 +2042,7 @@ def reverse(
     Returns:
         NMRData: Reversed NMRdata, optionally with updated spectral calibration.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if sw is not None: adjust_spectral_width = sw
@@ -2063,7 +2083,7 @@ def reverse(
         new_data.axes[dim] = new_axis_dict
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     new_data.processing_history.append({
         'Function': "Reverse data",
         'adjusted_sw': adjust_spectral_width,
@@ -2103,7 +2123,7 @@ def right_shift(
     Returns:
         NMRData: Data after applying right shift and zero padding.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if rs is not None: shift_amount = rs
@@ -2153,7 +2173,7 @@ def right_shift(
         new_data.axes[dim] = new_axis_dict
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     new_data.processing_history.append({
         'Function': "Right shift data",
         'shift_amount': shift_amount,
@@ -2194,7 +2214,7 @@ def left_shift(
     Returns:
         NMRData: Data after applying right shift and zero padding.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if rs is not None: shift_amount = rs
@@ -2205,7 +2225,7 @@ def left_shift(
     new_data.processing_history.pop()
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     new_data.processing_history.append({
         'Function': "Left shift data",
         'shift_amount': shift_amount,
@@ -2254,7 +2274,7 @@ def circular_shift(
     Returns:
         NMRData: Data after applying circular shift.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if rs is not None: right_shift_amount = rs
@@ -2303,7 +2323,7 @@ def circular_shift(
         new_data.axes[dim] = new_axis_dict
 
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     new_data.processing_history.append({
         'Function': "Circular shift data",
         'shift_amount': shift_amount,
@@ -2369,7 +2389,7 @@ def manipulate_sign(
     Returns:
         NMRData: Data after sign manipulation.
     """
-    start_time = time.perf_counter()
+    start_time = perf_counter()
     
     # Handle aliases
     if ri is not None: negate_all = ri
@@ -2413,7 +2433,7 @@ def manipulate_sign(
     if replace_with_sign:
         result = np.sign(result)
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = perf_counter() - start_time
     result.processing_history.append({
         'Function': "Sign manipulation",
         'negate_all': negate_all,
