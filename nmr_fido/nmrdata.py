@@ -5,7 +5,7 @@ import copy
 import inspect
 import functools
 
-from nmr_fido.utils import get_ppm_scale
+from nmr_fido.utils import get_hz_scale, get_ppm_scale
 
 
 class NMRData(np.ndarray):
@@ -192,6 +192,40 @@ class NMRData(np.ndarray):
         np.copyto(self, other)
         for attr in self._custom_attrs:
             setattr(self, attr, copy.deepcopy(getattr(other, attr)))
+    
+    
+    def scale_to_hz(self, target_dim: int = -1) -> NMRData:
+        """
+        Convert the scale of the target dimension to Hz using axis_info.
+
+        Args:
+            target_dim (int): Which dimension to convert. Defaults to last dimension (-1).
+
+        Returns:
+            NMRData: The updated object (self).
+        """
+        dim = target_dim if target_dim >= 0 else self.ndim + target_dim
+
+        if not hasattr(self, 'axes') or len(self.axes) <= dim:
+            raise ValueError(f"No axis_info available for dimension {dim}.")
+
+        axis_dict = self.axes[dim]
+        
+        if not all(k in axis_dict for k in ("SW", "ORI")):
+            return self
+
+        sw = axis_dict["SW"] # Sweep width [Hz]
+        ori = axis_dict["ORI"] # Origin freq (middle of spectrum) [Hz]
+
+        npoints = self.shape[dim]
+        
+        hz_scale = get_hz_scale(npoints, sw, ori)
+
+        self.axes[dim]["scale"] = hz_scale
+        self.axes[dim]["unit"] = "Hz"
+
+        return self
+    
     
     
     def scale_to_ppm(self, target_dim: int = -1) -> NMRData:
