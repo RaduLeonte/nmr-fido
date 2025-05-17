@@ -41,26 +41,40 @@ data = nf.TP(data)
 
 print(data)
 
-num_fids = 5
-fid_indices = np.linspace(0, data.shape[-1], num_fids, dtype=int)
-fig, axs = plt.subplots(num_fids,1, figsize=(14,10), layout="constrained")
+num_fids = 6
+#fid_indices = np.linspace(0, data.shape[-1], num_fids, dtype=int)
+fid_indices = np.random.choice(data.shape[0], size=num_fids, replace=False)
+fig, axs = plt.subplots(3, 2, figsize=(14,10), layout="constrained")
+flattened_axs = axs.ravel()
 
 fid = data[0]
-truncate = 30
-for ax, fid_index in zip(axs, fid_indices):
+print(fid.size)
+truncate = 166
+pred_size = 10
+for ax, fid_index in zip(flattened_axs, fid_indices):
     fid = data[fid_index]
-    truncated_fid = fid[:30]
-    print(fid)
+    truncated_fid = fid[:truncate][::-1]
     
-    ax.plot(fid, label="Raw")
+    #ax.plot(fid, label="Raw")
+    ax.plot(truncated_fid, label="Model fid", zorder=99)
 
-    lp_fid = nf.LP(truncated_fid)
-    ax.plot(lp_fid, label="LP")
+    """ lp_fid = nf.LP(truncated_fid, prediction_size=pred_size)
+    ax.plot(lp_fid, label="LP after", zorder=1) """
+    
+    """ lp_fid_before = nf.LP(truncated_fid, prediction_direction="backward", prediction_size=pred_size)
+    ax.plot(np.arange(0, lp_fid_before.size) - pred_size,lp_fid_before, label="LP before", zorder=1) """
+    
+    lp_fid_before_reversed = nf.LP(truncated_fid, prediction_direction="forward", prediction_size=pred_size, root_fix_mode="suppress_decreasing")
+    ax.plot(lp_fid_before_reversed, label="LP test", zorder=1)
+    
+    #lp_fid_no_root_fix = nf.LP(truncated_fid, prediction_size=pred_size, nofix=True)
+    #ax.plot(lp_fid_no_root_fix, label="LP no root fixing")
 
-    ax.plot(truncated_fid, label="Truncated")
+
     
     ax.legend()
-    ax.set_xlim(0, 50)
+    #ax.set_xlim(0, lp_fid.size)
+    ax.set_title(f"{fid_index=}")
 
 
 """ fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")

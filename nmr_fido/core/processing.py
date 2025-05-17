@@ -238,6 +238,11 @@ SOL.__name__ = "SOL"  # Auto-generated
 
 
 def _fit_lp_coeff(vector: np.ndarray, pred_start_idx: int, pred_end_idx: int, order: int) -> np.ndarray:
+    """
+           m
+    x_k =  Σ q_i * s_k-i
+          i=1
+    """
     
     y_fit = vector[pred_start_idx:pred_end_idx + 1]
     
@@ -262,6 +267,71 @@ def _fit_lp_coeff(vector: np.ndarray, pred_start_idx: int, pred_end_idx: int, or
     return coeffs
 
 
+def _find_roots(coeffs: np.ndarray) -> np.ndarray:
+    char_poly = np.concatenate(([1.0+0.0j], -coeffs[::-1]))
+    return np.roots(char_poly)
+
+
+def _fix_roots(roots: np.ndarray, root_fix_mode: str) -> np.ndarray:
+    match root_fix_mode:
+        case "suppress_increasing":
+            # Reflect roots outside unit circle
+            return np.array([
+                1 / np.conj(r) if abs(r) > 1 else r
+                for r in roots
+            ])
+        
+        case "suppress_decreasing":
+            # Reflect roots inside unit circle
+            return np.array([
+                1 / np.conj(r) if abs(r) < 1 else r
+                for r in roots
+            ])
+            
+        case _:
+            return roots
+
+
+def _plot_roots(*roots_list: np.ndarray) -> None:
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    theta = np.linspace(0, 2*np.pi, 200)
+    ax.plot(np.cos(theta), np.sin(theta), 'k', label='Unit Circle')
+    ax.axhline(0, color="black", zorder=0)
+    ax.axvline(0, color="black", zorder=0)
+    for i, roots in enumerate(roots_list):
+        ax.scatter(roots.real, roots.imag, ec="k", zorder=9999)
+    ax.set_aspect('equal')
+    ax.grid(True)
+    fig.show()
+    return
+
+
+def _plot_char_poly(*coeffs_list: np.ndarray) -> None:
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    theta = np.linspace(0, 2 * np.pi, 800)
+    z = np.exp(1j * theta)
+
+    fig, ax = plt.subplots()
+    colors = plt.cm.tab10.colors
+
+    for i, coeffs in enumerate(coeffs_list):
+        full_poly = np.concatenate(([1.0], -coeffs))
+        values = np.polyval(full_poly, z)
+        color = colors[i % len(colors)]
+        ax.plot(theta, 20 * np.log10(np.abs(values)), label=f'Poly {i+1}', color=color)
+
+    ax.set_xlabel("θ (radians)")
+    ax.set_ylabel("Magnitude (dB)")
+    ax.set_title("Characteristic Polynomial Magnitudes on Unit Circle")
+    ax.grid(True)
+    ax.legend()
+    fig.show()
+
+
 def linear_prediction(
     data: NMRData,
     *,
@@ -271,8 +341,8 @@ def linear_prediction(
     order: int = 8,
     model_direction: str = "forward",
     prediction_direction: str = "forward",
-    use_root_fixing: bool = False,
-    root_fix_mode: str = "suppress_increasing",
+    fix_roots: bool = True,
+    root_fix_mode: str = "auto",
     mirror_image: bool = False,
     shifted_mirror_image: bool = False,
     # Aliases
@@ -322,8 +392,8 @@ def linear_prediction(
     if fb: model_direction = "both"
     if before is not None: prediction_direction = "backward"
     if after is not None: prediction_direction = "forward"
-    if nofix: use_root_fixing = False
-    if fix: use_root_fixing = True
+    if nofix: fix_roots = False
+    if fix: fix_roots = True
     if fixMode is not None: root_fix_mode = {-1: "suppress_decreasing", 0: None, 1: "suppress_increasing"}[fixMode]
     if ps90_180 is not None: mirror_image = ps90_180
     if ps0_0 is not None: shifted_mirror_image = ps0_0
@@ -333,6 +403,9 @@ def linear_prediction(
     npoints = result.shape[-1]
     
     if prediction_size == -1: prediction_size = npoints
+    
+    if root_fix_mode == "auto":
+        root_fix_mode = {"forward": "suppress_increasing", "backward": "suppress_decreasing"}[prediction_direction]
     
     
     if order >= npoints/2:
@@ -377,7 +450,16 @@ def linear_prediction(
                 coeff_fwd = _fit_lp_coeff(model_fid, pred_start_idx, pred_end_idx, order)
                 coeff_rev = _fit_lp_coeff(model_fid[::-1], pred_start_idx, pred_end_idx, order)
                 coeffs = 0.5 * (coeff_fwd + coeff_rev)
-                
+        
+        
+        if fix_roots:
+            roots = _find_roots(coeffs)
+            
+            fixed_roots = _fix_roots(roots, root_fix_mode)
+            
+            fixed_coeffs = -np.poly(fixed_roots)[:0:-1] # drop leading 1 and flip sign convention
+            coeffs = fixed_coeffs 
+        
 
         extended = np.zeros(fid_length + prediction_size, dtype=fid.dtype)
         extended[:fid_length] = fid[::-1] if predict_reverse else fid
@@ -402,7 +484,7 @@ def linear_prediction(
         'pred_end_idx': pred_end_idx,
         'model_direction': model_direction,
         'prediction_direction': prediction_direction,
-        'root_fix': use_root_fixing,
+        'fix_roots': fix_roots,
         'root_fix_mode': root_fix_mode,
         'shape_before': original_shape,
         'shape_after': predicted_data.shape,
