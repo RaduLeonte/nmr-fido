@@ -1265,20 +1265,22 @@ def phase(
         result_array = result_array[..., :original_shape[-1]]
     
     elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Phase Correction",
-            'p0': p0,
-            'p1': p1,
-            'invert': invert,
-            'exponential_correction': exponential_correction,
-            'decay_constant': decay_constant,
-            'reconstruct_imaginaries': reconstruct_imaginaries,
-            'temporary_zero_fill': temporary_zero_fill,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+    
+    if hasattr(result, "processining_history"):
+        result.processing_history.append(
+            {
+                'Function': "Phase Correction",
+                'p0': p0,
+                'p1': p1,
+                'invert': invert,
+                'exponential_correction': exponential_correction,
+                'decay_constant': decay_constant,
+                'reconstruct_imaginaries': reconstruct_imaginaries,
+                'temporary_zero_fill': temporary_zero_fill,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
     
     return result
 
