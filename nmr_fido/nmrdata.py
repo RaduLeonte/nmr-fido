@@ -6,7 +6,7 @@ import inspect
 import functools
 import numbers
 
-from nmr_fido.utils import get_hz_scale, get_ppm_scale
+from nmr_fido.utils.scales import get_hz_scale, get_ppm_scale
 
 
 class NMRData(np.ndarray):

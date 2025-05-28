@@ -2,7 +2,8 @@ from time import perf_counter
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
-from nmr_fido.utils import _convert_to_index, get_ppm_scale
+from nmr_fido.utils.scales import get_ppm_scale
+from nmr_fido.utils.unit_to_index import _convert_to_index
 from scipy.signal import hilbert
 from scipy import signal, odr
 from scipy.optimize import curve_fit
