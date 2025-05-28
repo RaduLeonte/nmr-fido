@@ -504,7 +504,7 @@ def linear_prediction(
             coeffs = fixed_coeffs 
         
 
-        extended = np.zeros(fid_length + prediction_size, dtype=fid.dtype)
+        extended = np.empty(fid_length + prediction_size, dtype=fid.dtype)
         extended[:fid_length] = fid[::-1] if predict_reverse else fid
 
         for i in range(prediction_size):
