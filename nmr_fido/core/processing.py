@@ -2724,3 +2724,59 @@ def manipulate_sign(
 SIGN = manipulate_sign
 SIGN.__doc__ = manipulate_sign.__doc__  # Auto-generated
 SIGN.__name__ = "SIGN"  # Auto-generated
+
+
+def modulus(
+    data: NMRArrayType,
+    *,
+    modulus: bool = True,
+    modulus_squared: bool = False,
+    # Aliases
+    mod: bool | None = None,
+    pow: bool | None = None,
+) -> NMRArrayType:
+    """
+    Compute the modulus (magnitude) or squared modulus of complex NMR data.
+
+    Args:
+        data (NMRData or np.ndarray): Complex-valued input NMR dataset.
+        modulus (bool): If True, compute the modulus (|z|).
+        modulus_squared (bool): If True, compute the squared modulus (|z|^2).
+
+    Aliases:
+        mod: Alias for modulus.
+        pow: Alias for modulus_squared.
+
+    Returns:
+        NMRData or np.ndarray: Data after applying modulus or modulus squared.
+    """
+    start_time = perf_counter()
+    
+    # Handle aliases
+    if mod is not None: modulus = modulus
+    if pow is not None: modulus_squared = pow
+    
+    if modulus_squared:
+        result_array = np.real(data) ** 2 + np.imag(data) ** 2
+    else:
+        result_array = np.abs(data)
+
+
+    if isinstance(data, NMRData):
+        result = NMRData(result_array, copy_from=data)
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Modulus",
+            'modulus': modulus,
+            'modulus_squared': modulus_squared,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
+        return result
+
+    return cast(NMRArrayType, result_array)
+
+# NMRPipe alias
+MC = modulus
+MC.__doc__ = modulus.__doc__  # Auto-generated
+MC.__name__ = "MC"  # Auto-generated
