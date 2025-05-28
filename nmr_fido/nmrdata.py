@@ -110,6 +110,17 @@ class NMRData(np.ndarray):
             "scale": np.arange(size),
             "unit": "pts"
         }
+        
+        
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, NMRData):
+            return False
+        return (
+            np.array_equal(self, other)
+            and self.axes == other.axes
+            and self.metadata == other.metadata
+            and self.processing_history == other.processing_history
+        )
     
     
     def __getitem__(self, item) -> NMRData | Any:
@@ -210,6 +221,39 @@ class NMRData(np.ndarray):
         return "\n".join(lines)
     
     __repr__ = __str__
+    
+    
+    def summary(self, verbose: bool = False) -> str:
+        lines = [f"<NMRData shape={self.shape}, dtype={self.dtype}>"]
+
+        for i, axis in enumerate(self.axes):
+            label = axis.get("label", f"Axis {i}")
+            scale = axis.get("scale", [])
+            unit = axis.get("unit", "pts")
+
+            if len(scale) > 0:
+                range_str = f"{scale[0]:.3f}–{scale[-1]:.3f}"
+            else:
+                range_str = "empty"
+
+            axis_str = f"{label} [{unit} {range_str}]"
+
+            if verbose:
+                sw = axis.get("SW")
+                ori = axis.get("ORI")
+                obs = axis.get("OBS")
+
+                extras = []
+                if sw is not None: extras.append(f"SW={sw:.1f}")
+                if ori is not None: extras.append(f"ORI={ori:.3f}")
+                if obs is not None: extras.append(f"OBS={obs:.1f}")
+
+                if extras:
+                    axis_str += ", " + ", ".join(extras)
+
+            lines.append(f" Axis {i}: {axis_str}")
+
+        return "\n".join(lines)
     
     
     def _update_from(self, other: NMRData):
