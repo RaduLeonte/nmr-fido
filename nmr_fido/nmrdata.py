@@ -85,7 +85,11 @@ class NMRData(np.ndarray):
         if obj is None: return
         
         for attr in self._custom_attrs:
-            setattr(self, attr, getattr(obj, attr, None))
+            value = getattr(obj, attr, None)
+            if value is not None:
+                setattr(self, attr, copy.deepcopy(value))
+            else:
+                setattr(self, attr, self._default_value(attr, self))
     
     
     @staticmethod

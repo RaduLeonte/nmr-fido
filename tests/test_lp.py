@@ -50,25 +50,20 @@ flattened_axs = axs.ravel()
 fid = data[0]
 print(fid.size)
 truncate = 166
-pred_size = 10
+pred_size = truncate
 for ax, fid_index in zip(flattened_axs, fid_indices):
     fid = data[fid_index]
-    truncated_fid = fid[:truncate][::-1]
+    truncated_fid = fid[:truncate]
     
     #ax.plot(fid, label="Raw")
     ax.plot(truncated_fid, label="Model fid", zorder=99)
 
-    """ lp_fid = nf.LP(truncated_fid, prediction_size=pred_size)
-    ax.plot(lp_fid, label="LP after", zorder=1) """
+    lp_fid = nf.LP(truncated_fid, prediction_size=pred_size)
+    ax.plot(lp_fid, label="LP after", zorder=1)
+
     
-    """ lp_fid_before = nf.LP(truncated_fid, prediction_direction="backward", prediction_size=pred_size)
-    ax.plot(np.arange(0, lp_fid_before.size) - pred_size,lp_fid_before, label="LP before", zorder=1) """
-    
-    lp_fid_before_reversed = nf.LP(truncated_fid, prediction_direction="forward", prediction_size=pred_size, root_fix_mode="suppress_decreasing")
-    ax.plot(lp_fid_before_reversed, label="LP test", zorder=1)
-    
-    #lp_fid_no_root_fix = nf.LP(truncated_fid, prediction_size=pred_size, nofix=True)
-    #ax.plot(lp_fid_no_root_fix, label="LP no root fixing")
+    lp_fid_no_root_fix = nf.LP(truncated_fid, prediction_size=pred_size, nofix=True)
+    ax.plot(lp_fid_no_root_fix, label="LP no root fixing")
 
 
     

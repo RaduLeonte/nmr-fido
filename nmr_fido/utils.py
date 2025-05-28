@@ -39,7 +39,7 @@ def _convert_to_index(
 
         if "ppm" in value.lower() or "hz" in value.lower():
             idx = np.argmin(np.abs(scale - number))
-            return idx
+            return int(idx)
         
         elif "pts" in value.lower():
             idx = number if number >= 0 else npoints + number
