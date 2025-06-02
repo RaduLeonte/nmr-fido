@@ -1,5 +1,7 @@
 import numpy as np
 import nmrglue as ng
+from pprint import pprint
+from typing import Optional, List, Dict, Tuple
 
 from nmr_fido import NMRData
 
@@ -18,7 +20,7 @@ def _decode_bytes(bytes: list | np.ndarray) -> str:
 
 def _parse_nmrpipe_header(
     header_bytes: np.ndarray
-) -> None:
+) -> Tuple[Optional[List[Dict[str, str]]], Optional[Dict]]:
     print(np.array2string(header_bytes, max_line_width=80, precision=3, threshold=5))
     
     # Get nr of dimensions
@@ -39,14 +41,15 @@ def _parse_nmrpipe_header(
             }
         )
     
-    nmrdata_header = NMRData(np.zeros, axes=axes, metadata=None)
+    metadata = {}
     
-    return nmrdata_header
+    return axes, metadata
 
 
 def read_nmrpipe(
-    filepath_or_pattern
-    #*,
+    filepath_or_pattern,
+    *,
+    use_nmrglue: bool = True,
 ) -> NMRData:
     """_summary_
 
@@ -57,12 +60,41 @@ def read_nmrpipe(
         NMRData: _description_
     """
     
+    if use_nmrglue:
+        ng_dic, ng_data = ng.pipe.read(filepath_or_pattern)
+        
+        axes = []
+        ndim = int(ng_dic["FDDIMCOUNT"])
+        
+        for dim in range(ndim):
+            dim_code = f"FDF{dim+1}"
+            axis_dict = {
+                "label": ng_dic.get(f"{dim_code}LABEL", f"dim{dim}"),
+                "SW":    ng_dic.get(f"{dim_code}SW"),
+                "ORI":   ng_dic.get(f"{dim_code}ORIG"),
+                "OBS":   ng_dic.get(f"{dim_code}OBS"),
+            }
+            
+            if int(ng_dic.get(f"{dim_code}QUADFLAG", 0)) == 0:
+                axis_dict["interleaved_data"] = True
+
+
+            axes.append(axis_dict)
+
+        result = NMRData(
+            ng_data,
+            axes=axes
+        )
+        
+        return result
+    
+    raise NotImplementedError("Reading NMRPipe files without nmrglue is not yet implemented. Set use_nmrglue=True to enable reading via nmrglue.")
+    
     file_bytes = np.fromfile(filepath_or_pattern, dtype=np.float32)
     header_bytes = file_bytes[:512]
     raw_data = file_bytes[512:]
     
     nmrdata_header = _parse_nmrpipe_header(header_bytes)
-    
     
     target_shape = (332, 1500)
     data = raw_data.reshape(*target_shape[:-1], target_shape[-1]*2)
@@ -84,7 +116,7 @@ def read_nmrpipe(
 
 
 if __name__ == "__main__":
-    data = read_nmrpipe("tests/test.fid")
+    data = read_nmrpipe("tests/test2d.fid")
     
     print(data)
     pass

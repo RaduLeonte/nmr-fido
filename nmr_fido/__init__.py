@@ -1,4 +1,13 @@
+__all__ = []
+
 from .nmrdata import NMRData
+__all__ += ["NMRData"]
+
+from .io.fileio import (
+    read_nmrpipe
+)
+__all__ += ["read_nmrpipe"]
+
 from .core.processing import (
     solvent_filter, SOL,
     linear_prediction, LP,
@@ -25,8 +34,7 @@ from .core.processing import (
     modulus, MC,
 )
 
-__all__ = [
-    "NMRData",
+__all__ += [
     "solvent_filter", "SOL",
     "linear_prediction", "LP",
     "sine_bell_window", "SP",
@@ -51,3 +59,5 @@ __all__ = [
     "manipulate_sign", "SIGN",
     "modulus", "MC",
 ]
+
+
