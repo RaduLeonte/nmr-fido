@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import time
 
 
-dic, data = ng.pipe.read("tests/test.fid")
+dic, data = ng.pipe.read("tests/test2d.fid")
 
 data = nf.NMRData(
     data,

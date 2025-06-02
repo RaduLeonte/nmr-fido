@@ -2,10 +2,23 @@ from time import perf_counter
 import numpy as np
 import copy
 from nmr_fido.nmrdata import NMRData
-from nmr_fido.utils import _convert_to_index, get_ppm_scale
+from nmr_fido.utils.scales import get_ppm_scale
+from nmr_fido.utils.unit_to_index import _convert_to_index
 from scipy.signal import hilbert
 from scipy import signal, odr
 from scipy.optimize import curve_fit
+from typing import TypeVar, cast
+
+
+NMRArrayType = TypeVar("NMRArrayType", bound=np.ndarray)
+
+
+def _resolve_aliases(targets: dict, source:dict) -> None:
+    for key, aliases in targets.items():
+        for alias in aliases:
+            if alias in source and source[alias] is not None:
+                source[key] = source[alias]
+                break
 
 
 def _format_elapsed_time(elapsed: float) -> str:
@@ -28,7 +41,7 @@ def _format_elapsed_time(elapsed: float) -> str:
     return f"{seconds}s {milliseconds}ms {microseconds}µs"
 
 
-def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
+def _interleaved_to_complex(data: NMRArrayType, dim: int = -1) -> NMRArrayType:
     """Convert interleaved data [re1, im1, re2, im2, ...] to complex data [re1 + 1j*im1, re2 + 1j*im2, ....]
 
     Args:
@@ -64,13 +77,17 @@ def _interleaved_to_complex(data: NMRData, dim: int = -1) -> 'NMRData':
     complex_data.real = data[tuple(slices_real)]
     complex_data.imag = data[tuple(slices_imag)]
     
-    result = NMRData(complex_data, copy_from=data)
-    result.axes[dim]["acqu_mode"] = "Complex"
+    result = complex_data.copy()
+    
+    if isinstance(data, NMRData):
+        result = NMRData(complex_data, copy_from=data)
+        result.axes[dim]["acqu_mode"] = "Complex"
+        return result
 
-    return result
+    return complex_data.view(type(data))
 
 
-def _lowpass_filter_safe(fid: np.ndarray | NMRData, filt: np.array) -> np.ndarray | NMRData:
+def _lowpass_filter_safe(fid: NMRArrayType, filt: np.ndarray) -> NMRArrayType:
     # Half filter width
     K = len(filt) // 2
 
@@ -87,7 +104,7 @@ def _lowpass_filter_safe(fid: np.ndarray | NMRData, filt: np.array) -> np.ndarra
 
 
 def solvent_filter(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     filter_mode: str = "Low Pass",
     lowpass_size: int = 16,
@@ -102,41 +119,51 @@ def solvent_filter(
     use_mirror_ext: bool = False,
     
     # Aliases
-    mode: str = None,
-    fl: int = None,
-    fs: int = None,
-    po: int = None,
-    sn: float = None,
-    sf: float = None,
-    head: int = None,
-    poly: bool = None,
-    mir: bool = None,
-    #noseq: bool = None,
-    #nodms: bool = None,
-) -> NMRData:
+    mode: int | None = None,
+    fl: int | None = None,
+    fs: int | None = None,
+    po: int | None = None,
+    sn: float | None = None,
+    sf: float | None = None,
+    head: int | None = None,
+    poly: bool | None = None,
+    mir: bool | None = None,
+    #noseq: bool | None = None,
+    #nodms: bool | None = None,
+) -> NMRArrayType:
     """
     Desc.
 
     Args:
-        data (NMRData): Input data.
+        data (NMRArrayType): Input data.
 
     Aliases:
 
     Returns:
-        NMRData: .
+        NMRArrayType: .
     """
     start_time = perf_counter()
     
-    # Handle argument aliases
-    if mode is not None: filter_mode = {1: "Low Pass", 2: "Spline", 3: "Polynomial"}[mode]
-    if fl is not None: lowpass_size = fl
-    if fs is not None: lowpass_shape = {1: "Boxcar", 2: "Sine", 3: "Sine^2"}[fs]
-    if po is not None: poly_ext_order = po
-    if sn is not None: spline_noise = sn
-    if sf is not None: smooth_factor = sf
-    if head is not None: skip_points = head
-    if poly is not None: use_poly_ext = poly
-    if mir is not None: use_mirror_ext = mir
+    _resolve_aliases(
+        {
+            "filter_mode": ["mode"],
+            "lowpass_size": ["fl"],
+            "lowpass_shape": ["fs"],
+            "poly_ext_order": ["po"],
+            "spline_noise": ["sn"],
+            "smooth_factor": ["sf"],
+            "skip_points": ["head"],
+            "use_poly_ext": ["poly"],
+            "use_mirror_ext": ["mir"],
+        },
+        locals()
+    )
+    
+    if isinstance(filter_mode, int):
+        filter_mode = {1: "Low Pass", 2: "Spline", 3: "Polynomial"}[filter_mode]
+
+    if isinstance(lowpass_shape, int):
+        lowpass_shape = {1: "Boxcar", 2: "Sine", 3: "Sine^2"}[lowpass_shape]
 
 
     result = data.copy()
@@ -164,6 +191,7 @@ def solvent_filter(
                 quency component is then subtracted from the original signal (Fig. 1B)."
             """
             filter_kernel = None
+            b = a = None  # Predeclare for Butterworth
             match lowpass_shape:
                 case "Boxcar":
                     filter_kernel = np.ones(filter_width, dtype=np.float32)
@@ -178,7 +206,7 @@ def solvent_filter(
                     filter_kernel = np.exp(-4 * (np.linspace(-0.5, 0.5, filter_width)**2) / (0.5**2))
                     
                 case "Butterworth":
-                    b, a = signal.butter(butter_ord, butter_cutoff, btype='low', analog=False)
+                    b, a = signal.butter(butter_ord, butter_cutoff, btype='low', analog=False) # type: ignore
                     
                 case _:
                     raise ValueError(f"Unknown lowpass_shape: {lowpass_shape}")
@@ -220,14 +248,15 @@ def solvent_filter(
     result[..., skip_points:] = sliced_data
     
     elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Solvent filter",
-            'filter_mode': filter_mode,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+    if isinstance(result, NMRData):
+        result.processing_history.append(
+            {
+                'Function': "Solvent filter",
+                'filter_mode': filter_mode,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
     
     return result
 
@@ -237,123 +266,275 @@ SOL.__doc__ = solvent_filter.__doc__  # Auto-generated
 SOL.__name__ = "SOL"  # Auto-generated
 
 
+def _fit_lp_coeff(vector: np.ndarray, pred_start_idx: int, pred_end_idx: int, order: int) -> np.ndarray:
+    """
+           m
+    x_k =  Σ q_i * s_k-i
+          i=1
+    """
+    
+    y_fit = vector[pred_start_idx:pred_end_idx + 1]
+    
+    K = order
+    n = len(y_fit) - order
+    
+    """
+    q1*x0      + q2*x1  + q3*x2      + ... + qK*x_{K-1}   = x_K
+    q1*x1      + q2*x2  + q3*x3      + ... + qK*x_K       = x_{K+1}
+    q1*x2      + q2*x3  + q3*x4      + ... + qK*x_{K+1}   = x_{K+2}
+    
+        ⋮
+    
+    q1*x_{n-1} + q2*x_n + q3*x_{n+1} + ... + qK*x_{n+K-2} = x_{n+K-1}
+    """
+    M = np.array([y_fit[i : i + K] for i in range(n)])
+    
+    r = y_fit[K : K + n]
+    
+    coeffs, residuals, rank, s = np.linalg.lstsq(M, r, rcond=None)
+    
+    return coeffs
+
+
+def _find_roots(coeffs: np.ndarray) -> np.ndarray:
+    char_poly = np.concatenate(([1.0+0.0j], -coeffs[::-1]))
+    return np.roots(char_poly)
+
+
+def _fix_roots(roots: np.ndarray, root_fix_mode: str) -> np.ndarray:
+    match root_fix_mode:
+        case "suppress_increasing":
+            # Reflect roots outside unit circle
+            return np.array([
+                1 / np.conj(r) if abs(r) > 1 else r
+                for r in roots
+            ])
+        
+        case "suppress_decreasing":
+            # Reflect roots inside unit circle
+            return np.array([
+                1 / np.conj(r) if abs(r) < 1 else r
+                for r in roots
+            ])
+            
+        case _:
+            return roots
+
+
+def _plot_roots(*roots_list: np.ndarray) -> None:
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    theta = np.linspace(0, 2*np.pi, 200)
+    ax.plot(np.cos(theta), np.sin(theta), 'k', label='Unit Circle')
+    ax.axhline(0, color="black", zorder=0)
+    ax.axvline(0, color="black", zorder=0)
+    for i, roots in enumerate(roots_list):
+        ax.scatter(roots.real, roots.imag, ec="k", zorder=9999)
+    ax.set_aspect('equal')
+    ax.grid(True)
+    fig.show()
+    return
+
+
+def _plot_char_poly(*coeffs_list: np.ndarray) -> None:
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    theta = np.linspace(0, 2 * np.pi, 800)
+    z = np.exp(1j * theta)
+
+    fig, ax = plt.subplots()
+    cmap = plt.get_cmap("tab10")
+    colors = [cmap(i) for i in range(cmap.N)]
+
+    for i, coeffs in enumerate(coeffs_list):
+        full_poly = np.concatenate(([1.0], -coeffs))
+        values = np.polyval(full_poly, z)
+        color = colors[i % len(colors)]
+        ax.plot(theta, 20 * np.log10(np.abs(values)), label=f'Poly {i+1}', color=color)
+
+    ax.set_xlabel("θ (radians)")
+    ax.set_ylabel("Magnitude (dB)")
+    ax.set_title("Characteristic Polynomial Magnitudes on Unit Circle")
+    ax.grid(True)
+    ax.legend()
+    fig.show()
+
 
 def linear_prediction(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     prediction_size: int = -1,
     pred_start: int = 0,
     pred_end: int = -1,
     order: int = 8,
-    direction: str = "forward",
-    use_root_fixing: bool = False,
-    root_fix_mode: int = "suppress_increasing",
+    model_direction: str = "forward",
+    prediction_direction: str = "forward",
+    fix_roots: bool = True,
+    root_fix_mode: str = "auto",
+    mirror_image: bool = False,
+    shifted_mirror_image: bool = False,
     # Aliases
-    pred: int = None,
-    x1: int = None,
-    xn: int = None,
-    ord: int = None,
-    f: bool = None,
-    b: bool = None,
-    fb: bool = None,
-    before: bool = None,
-    after: bool = None,
-    nofix: bool = None,
-    fix: bool = None,
-    fixMode: int = None,
-    ps90_180: bool = None,
-    ps0_0: bool = None,
-    pca: bool = None,
-    extra: int = None,
-) -> NMRData:
+    pred: int | None = None,
+    x1: int | None = None,
+    xn: int | None = None,
+    ord: int | None = None,
+    f: bool | None = None,
+    b: bool | None = None,
+    fb: bool | None = None,
+    before: bool | None = None,
+    after: bool | None = None,
+    nofix: bool | None = None,
+    fix: bool | None = None,
+    fixMode: int | None = None,
+    ps90_180: bool | None = None,
+    ps0_0: bool | None = None,
+    #pca: bool | None = None,
+    #extra: int | None = None,
+) -> NMRArrayType:
     """
-    Desc.
+    Apply linear prediction to the last dimension of the NMRData array.
 
     Args:
         data (NMRData): Input data.
-
-    Aliases:
+        prediction_size (int): Number of points to predict (default: same as data size).
+        pred_start (int): Start index for fitting.
+        pred_end (int): End index for fitting.
+        order (int): Number of coefficients to fit.
+        direction (str): 'forward', 'backward', or 'both' (currently only 'forward' implemented).
+        use_root_fixing (bool): Whether to apply root-fixing to suppress diverging behavior.
+        root_fix_mode (str): Strategy to suppress diverging roots.
 
     Returns:
-        NMRData: .
+        NMRData: Predicted data with extended FID.
     """
+    start_time = perf_counter()
+    
     # Handle argument aliases
-    if pred is not None: prediction_size = pred
-    if x1 is not None: pred_start = x1
-    if xn is not None: pred_end = xn
-    if ord is not None: order = ord
-    if f: direction = "forward"
-    if b: direction = "backward"
-    if fb: direction = "both"
-    if before is not None: direction = "backward"
-    if after is not None: direction = "forward"
-    if nofix: use_root_fixing = False
-    if fix: use_root_fixing = True
-    if fixMode is not None: root_fix_mode = {-1: "suppress_decreasing", 0: None, 1: "suppress_increasing"}[fixMode]
+    _resolve_aliases(
+        {
+            "prediction_size": ["pred"],
+            "pred_start": ["x1"],
+            "pred_end": ["xn"],
+            "order": ["ord"],
+            "mirror_image": ["ps90_180"],
+            "shifted_mirror_image": ["ps0_0"],
+        },
+        locals()
+    )
+    
+    if f: model_direction = "forward"
+    if b: model_direction = "backward"
+    if fb: model_direction = "both"
+
+    if before is not None:
+        prediction_direction = "backward"
+    if after is not None:
+        prediction_direction = "forward"
+
+    if nofix:
+        fix_roots = False
+    if fix:
+        fix_roots = True
+
+    if fixMode is not None:
+        root_fix_mode = {-1: "suppress_decreasing", 0: None, 1: "suppress_increasing"}[fixMode]
     
     
     result = data.copy()
     npoints = result.shape[-1]
     
+    if prediction_size == -1: prediction_size = npoints
+    
+    if root_fix_mode == "auto":
+        root_fix_mode = {"forward": "suppress_increasing", "backward": "suppress_decreasing"}[prediction_direction]
+    
+    
     if order >= npoints/2:
         raise ValueError(f"Number of coefficients ({order=}) must be less than half the number of points in the vector ({npoints=})")
     
-    if prediction_size == -1: prediction_size = npoints
     
     pred_start_idx = _convert_to_index(result, pred_start, npoints, default=0)
     pred_end_idx = _convert_to_index(result, pred_end, npoints, default=npoints - 1)
     
     
-    def fit_coeff(vector: np.ndarray) -> np.ndarray:
-        y_fit = vector[pred_start_idx:pred_end_idx + 1]
-        
-        K = order
-        n = len(y_fit) - order
-        
-        """
-        q1*x0      + q2*x1  + q3*x2      + ... + qK*x_{K-1}   = x_K
-        q1*x1      + q2*x2  + q3*x3      + ... + qK*x_K       = x_{K+1}
-        q1*x2      + q2*x3  + q3*x4      + ... + qK*x_{K+1}   = x_{K+2}
-        
-          ⋮
-        
-        q1*x_{n-1} + q2*x_n + q3*x_{n+1} + ... + qK*x_{n+K-2} = x_{n+K-1}
-        """
-        M = np.array([y_fit[i : i + K] for i in range(n)])
-        
-        r = y_fit[K : K + n]
-        
-        coeffs, residuals, rank, s = np.linalg.lstsq(M, r, rcond=None)
-        
-        return coeffs
-    
     # Predict points
     original_shape = result.shape
-    new_shape = original_shape[:-1] + [original_shape[-1] + prediction_size]
+    new_last_dim = original_shape[-1] + prediction_size
+    new_shape = original_shape[:-1] + (new_last_dim,)
     predicted_data = np.zeros(new_shape)
-    pred_index = npoints
     
-    fid_length = len(fid)
     
+    predict_reverse = prediction_direction == "backward"
     for index in np.ndindex(result.shape[:-1]):
         fid = np.array(result[index])
-        coeffs = fit_coeff(fid)
+        fid_length = fid.size
         
-        predicted_fid = np.zeros(fid_length + prediction_size)
-        predicted_fid[:fid_length] = fid
+        coeffs = np.zeros(order)
+        model_fid = fid
         
+        if mirror_image:
+            mirror = np.conj(fid[::-1])
+            model_fid = np.concatenate([mirror[:-1], fid])
+            
+        if shifted_mirror_image:
+            mirror = np.conj(fid[::-1])
+            model_fid = np.concatenate([mirror, fid])
+        
+        match model_direction:
+            case "forward":
+                coeffs = _fit_lp_coeff(model_fid, pred_start_idx, pred_end_idx, order)
+                
+            case "backward":
+                coeffs = _fit_lp_coeff(model_fid[::-1], pred_start_idx, pred_end_idx, order)
+                
+            case "both":
+                coeff_fwd = _fit_lp_coeff(model_fid, pred_start_idx, pred_end_idx, order)
+                coeff_rev = _fit_lp_coeff(model_fid[::-1], pred_start_idx, pred_end_idx, order)
+                coeffs = 0.5 * (coeff_fwd + coeff_rev)
+        
+        
+        if fix_roots:
+            roots = _find_roots(coeffs)
+            
+            fixed_roots = _fix_roots(roots, root_fix_mode)
+            
+            fixed_coeffs = -np.poly(fixed_roots)[:0:-1] # drop leading 1 and flip sign convention
+            coeffs = fixed_coeffs 
+        
+
+        extended = np.empty(fid_length + prediction_size, dtype=fid.dtype)
+        extended[:fid_length] = fid[::-1] if predict_reverse else fid
+
         for i in range(prediction_size):
-            # Get previous N points (order)
-            prev_points = predicted_fid[i + fid_length - order : i + fid_length]
-            
-            predicted_fid[len(fid) + i] = np.dot(coeffs, prev_points)
-            
+            prev_points = extended[i + fid_length - order : i + fid_length]
+            extended[fid_length + i] = np.dot(coeffs, prev_points)
+
+        predicted_fid = extended[::-1] if predict_reverse else extended
         predicted_data[index] = predicted_fid
     
-    raise NotImplementedError
-
     
-    result = data
+    if isinstance(data, NMRData):
+        result = NMRData(predicted_data, copy_from=data)
+        result.axes[-1]["scale"] = np.arange(new_last_dim)
+        
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Linear Prediction",
+            'order': order,
+            'prediction_size': prediction_size,
+            'pred_start_idx': pred_start_idx,
+            'pred_end_idx': pred_end_idx,
+            'model_direction': model_direction,
+            'prediction_direction': prediction_direction,
+            'fix_roots': fix_roots,
+            'root_fix_mode': root_fix_mode,
+            'shape_before': original_shape,
+            'shape_after': predicted_data.shape,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
     
     return result
 
@@ -364,14 +545,14 @@ LP.__name__ = "LP"  # Auto-generated
 
 
 def _apply_window(
-    data: NMRData,
+    data: NMRArrayType,
     window: np.ndarray,
     size_window: int,
     start: int,
     invert_window: bool,
     scale_factor_first_point: float,
     fill_outside_one: bool,
-) -> NMRData:
+) -> NMRArrayType:
     # Invert window if necessary
     if invert_window:
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -410,29 +591,33 @@ def _apply_window(
     # Scale first point
     result[..., start-1] *= scale_factor_first_point
     
-    return result
+    if isinstance(data, NMRData):
+        return NMRData(result, copy_from=data)
+    
+    
+    return result.view(type(data))
 
 
 def sine_bell_window(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     start_angle: float = 0.0,
     end_angle: float = 1.0,
     exponent: float = 1.0,
-    size_window: int = None,
+    size_window: int | None = None,
     start: int = 1,
     scale_factor_first_point: float = 1.0,
     fill_outside_one: bool = False,
     invert_window: bool = False,
     # Aliases
-    off: float = None,
-    end: float = None,
-    pow: float = None,
-    size: int = None,
-    c: float = None,
-    one: bool = None,
-    inv: bool = None,
-) -> NMRData:
+    off: float | None = None,
+    end: float | None = None,
+    pow: float | None = None,
+    size: int | None = None,
+    c: float | None = None,
+    one: bool | None = None,
+    inv: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a sine-bell apodization (window) to the last dimension of the data.
 
@@ -462,13 +647,18 @@ def sine_bell_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if off is not None: start_angle = off
-    if end is not None: end_angle = end
-    if pow is not None: exponent = pow
-    if size is not None: size_window = size
-    if c is not None: scale_factor_first_point = c
-    if one is not None: fill_outside_one = one
-    if inv is not None: invert_window = inv
+    _resolve_aliases(
+        {
+            "start_angle": ["off"],
+            "end_angle": ["end"],
+            "exponent": ["pow"],
+            "size_window": ["size"],
+            "scale_factor_first_point": ["c"],
+            "fill_outside_one": ["one"],
+            "invert_window": ["inv"],
+        },
+        locals()
+    )
     
     if size_window is None:
         size_window = int(data.shape[-1])
@@ -492,21 +682,22 @@ def sine_bell_window(
     )
     
     elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Apodization: Sine bell window",
-            'start_angle': start_angle,
-            'end_angle': end_angle,
-            'exponent': exponent,
-            'size_window': size_window,
-            'start': start,
-            'scale_factor_first_point': scale_factor_first_point,
-            'fill_outside_one': fill_outside_one,
-            'invert_window': invert_window,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+    if isinstance(result, NMRData) and hasattr(result, "processing_history"):
+        result.processing_history.append(
+            {
+                'Function': "Apodization: Sine bell window",
+                'start_angle': start_angle,
+                'end_angle': end_angle,
+                'exponent': exponent,
+                'size_window': size_window,
+                'start': start,
+                'scale_factor_first_point': scale_factor_first_point,
+                'fill_outside_one': fill_outside_one,
+                'invert_window': invert_window,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
     
     return result
 
@@ -517,25 +708,26 @@ SP.__name__ = "SP"  # Auto-generated
 
 
 def lorentz_to_gauss_window(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     inv_exp_width: float = 0.0,
     broaden_width: float = 0.0,
     center: float = 0.0,
-    size_window: int = None,
+    size_window: int | None = None,
     start: int = 1,
     scale_factor_first_point: float = 1.0,
     fill_outside_one: bool = False,
     invert_window: bool = False,
+    sw: float | None = None,
     # Aliases
-    g1: float = None,
-    g2: float = None,
-    g3: float = None,
-    size: int = None,
-    c: float = None,
-    one: bool = None,
-    inv: bool = None,
-) -> NMRData:
+    g1: float | None = None,
+    g2: float | None = None,
+    g3: float | None = None,
+    size: int | None = None,
+    c: float | None = None,
+    one: bool | None = None,
+    inv: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a Lorentz-to-Gauss apodization (window) to the last dimension of the data.
 
@@ -565,20 +757,28 @@ def lorentz_to_gauss_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if g1 is not None: inv_exp_width = g1
-    if g2 is not None: broaden_width = g2
-    if g3 is not None: center = g3
-    if size is not None: size_window = size
-    if c is not None: scale_factor_first_point = c
-    if one is not None: fill_outside_one = one
-    if inv is not None: invert_window = inv
+    _resolve_aliases(
+        {
+            "inv_exp_width": ["g1"],
+            "broaden_width": ["g2"],
+            "center": ["g3"],
+            "size_window": ["size"],
+            "scale_factor_first_point": ["c"],
+            "fill_outside_one": ["one"],
+            "invert_window": ["inv"],
+        },
+        locals()
+    )
     
     if size_window is None:
         size_window = int(data.shape[-1])
     
-    sw = data.axes[-1].get("SW", None)
-    if sw is None:
-        raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    if isinstance(data, NMRData):
+        sw = data.axes[-1].get("SW", None)
+        if sw is None:
+            raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    elif sw is None:
+        raise ValueError("Spectral width (sw) must be provided when data is not NMRData.")
     
     # Create window
     t = np.arange(size_window)
@@ -597,24 +797,26 @@ def lorentz_to_gauss_window(
         start,
         invert_window,
         scale_factor_first_point,
-        fill_outside_one
+        fill_outside_one,
     )
     
     
     elapsed = perf_counter() - start_time
-    result.processing_history.append({
-        'Function': "Apodization: Lorentz-to-Gauss window",
-        'inv_exp_width': inv_exp_width,
-        'broaden_width': broaden_width,
-        'center': center,
-        'size_window': size_window,
-        'start': start,
-        'scale_factor_first_point': scale_factor_first_point,
-        'fill_outside_one': fill_outside_one,
-        'invert_window': invert_window,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
+    if isinstance(result, NMRData):
+        result.processing_history.append({
+            'Function': "Apodization: Lorentz-to-Gauss window",
+            'inv_exp_width': inv_exp_width,
+            'broaden_width': broaden_width,
+            'center': center,
+            'size_window': size_window,
+            'start': start,
+            'scale_factor_first_point': scale_factor_first_point,
+            'fill_outside_one': fill_outside_one,
+            'invert_window': invert_window,
+            'SW': sw,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
     
     return result
 
@@ -625,21 +827,22 @@ GM.__name__ = "GM"  # Auto-generated
 
 
 def exp_mult_window(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     line_broadening: float = 0.0,
-    size_window: int = None,
+    size_window: int | None = None,
     start: int = 1,
     scale_factor_first_point: float = 1.0,
     fill_outside_one: bool = False,
     invert_window: bool = False,
+    sw: float | None = None,
     # Aliases
-    lb: float = None,
-    size: int = None,
-    c: float = None,
-    one: bool = None,
-    inv: bool = None,
-) -> NMRData:
+    lb: float | None = None,
+    size: int | None = None,
+    c: float | None = None,
+    one: bool | None = None,
+    inv: bool | None = None,
+) -> NMRArrayType:
     """
     Apply an exponential multiply apodization (window) to the last dimension of the data.
 
@@ -665,23 +868,33 @@ def exp_mult_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if lb is not None: line_broadening = lb
-    if size is not None: size_window = size
-    if c is not None: scale_factor_first_point = c
-    if one is not None: fill_outside_one = one
-    if inv is not None: invert_window = inv
+    _resolve_aliases(
+        {
+            "line_broadening": ["lb"],
+            "size_window": ["size"],
+            "scale_factor_first_point": ["c"],
+            "fill_outside_one": ["one"],
+            "invert_window": ["inv"],
+        },
+        locals()
+    )
+
+
     
     if size_window is None:
         size_window = int(data.shape[-1])
     
-    sw = data.axes[-1].get("SW", None)
-    if sw is None:
-        raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    if isinstance(data, NMRData):
+        sw = data.axes[-1].get("SW", None)
+        if sw is None:
+            raise ValueError("Spectral width (SW) is not defined in the data axis.")
+    elif sw is None:
+        raise ValueError("Spectral width (sw) must be provided when data is not NMRData.")
     
     # Create window
     t = np.arange(size_window)
     
-    window = np.expt(
+    window = np.exp(
         -np.pi * t * line_broadening / sw
     ).astype(data.dtype)
     
@@ -694,19 +907,19 @@ def exp_mult_window(
         fill_outside_one
     )
     
-    
-    elapsed = perf_counter() - start_time
-    result.processing_history.append({
-        'Function': "Apodization: Exponential multiply window",
-        'line_broadening': line_broadening,
-        'size_window': size_window,
-        'start': start,
-        'scale_factor_first_point': scale_factor_first_point,
-        'fill_outside_one': fill_outside_one,
-        'invert_window': invert_window,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
+    if isinstance(result, NMRData):
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Apodization: Exponential multiply window",
+            'line_broadening': line_broadening,
+            'size_window': size_window,
+            'start': start,
+            'scale_factor_first_point': scale_factor_first_point,
+            'fill_outside_one': fill_outside_one,
+            'invert_window': invert_window,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
     
     return result
 
@@ -718,16 +931,16 @@ EM.__name__ = "EM"  # Auto-generated
 
 
 def zero_fill(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     factor: int = 1,
-    add: int = None,
-    final_size: int = None,
+    add: int | None = None,
+    final_size: int | None = None,
     # Aliases
-    zf: int = None,
-    pad: int = None,
-    size: int = None,
-) -> NMRData:
+    zf: int | None = None,
+    pad: int | None = None,
+    size: int | None = None,
+) -> NMRArrayType:
     """
     Zero fill the last dimension of the data.
 
@@ -748,27 +961,34 @@ def zero_fill(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if zf is not None: factor = zf
-    if pad is not None: add = pad
-    if size is not None: final_size = size
+    _resolve_aliases(
+        {
+            "factor": ["zf"],
+            "add": ["pad"],
+            "final_size": ["size"],
+        },
+        locals()
+    )
     
     original_shape = list(data.shape)
     last_dim = original_shape[-1]
     
-    
-    last_unit = data.axes[-1]["unit"]
-    if last_unit not in ("pts", None, "points"):
-        raise ValueError(
-            f"Cannot zero-fill: last dimension unit is '{last_unit}', expected 'pts' or None."
-        )
+    if isinstance(data, NMRData):
+        last_unit = data.axes[-1]["unit"]
+        if last_unit not in ("pts", None, "points"):
+            raise ValueError(
+                f"Cannot zero-fill: last dimension unit is '{last_unit}', expected 'pts' or None."
+            )
 
     # If user sets anything other than factor, we switch mode
     if any(x is not None for x in (add, final_size)):
         if sum(x is not None for x in (add, final_size)) > 1:
             raise ValueError("Specify only one of 'add' or 'final_size'.")
-        factor = None  # Ignore default doubling if add or final_size is given
+        factor = -1  # Ignore default doubling if add or final_size is given
 
-    if factor is not None:
+    method = ""
+    new_last_dim = last_dim
+    if factor != -1:
         new_last_dim = last_dim * (2 ** factor)
         method = 'factor'
     
@@ -792,24 +1012,27 @@ def zero_fill(
     slicing = tuple(slice(0, s) for s in original_shape)
     result_array[slicing] = data
 
-    result = NMRData(result_array, copy_from=data)
-    
-    # Update last scale with pts
-    result.axes[-1]["scale"] = np.arange(new_last_dim)
-    
-    # Update processing history
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Zero filling",
-            'original_last_dim': last_dim,
-            'new_last_dim': new_last_dim,
-            'method': method,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
-    return result
+    if isinstance(data, NMRData):
+        result = NMRData(result_array, copy_from=data)
+        
+        # Update last scale with pts
+        result.axes[-1]["scale"] = np.arange(new_last_dim)
+        
+        # Update processing history
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Zero filling",
+                'original_last_dim': last_dim,
+                'new_last_dim': new_last_dim,
+                'method': method,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        return result
+        
+    return result_array.view(type(data))
 
 # NMRPipe alias
 ZF = zero_fill
@@ -819,7 +1042,7 @@ ZF.__name__ = "ZF"  # Auto-generated
 
 
 def fourier_transform(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     real_only: bool = False,
     inverse: bool = False,
@@ -829,11 +1052,11 @@ def fourier_transform(
     #dmx: bool = False,
     #nodmx: bool = False,
     # Aliases
-    real: bool = None,
-    inv: bool = None,
-    neg: bool = None,
-    alt: bool = None,
-) -> NMRData:
+    real: bool | None = None,
+    inv: bool | None = None,
+    neg: bool | None = None,
+    alt: bool | None = None,
+) -> NMRArrayType:
     """
     Apply Fourier Transform to the last dimension of the NMRData.
 
@@ -857,10 +1080,17 @@ def fourier_transform(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if real is not None: real_only = real
-    if inv is not None: inverse = inv
-    if neg is not None: negate_imaginaries = neg
-    if alt is not None: sign_alteration = alt
+    _resolve_aliases(
+        {
+            "real_only": ["real"],
+            "inverse": ["inv"],
+            "negate_imaginaries": ["neg"],
+            "sign_alteration": ["alt"],
+        },
+        locals()
+    )
+
+
     
     if bruk:
         real_only = True
@@ -914,30 +1144,31 @@ def fourier_transform(
         transformed *= int(data.shape[-1]) # undo norm
 
 
-    # Result
-    result = NMRData(transformed, copy_from=data)
-    
-    
-    # Convert scale to ppm
-    result.scale_to_ppm()
+    if isinstance(data, NMRData):
+        # Result
+        result = NMRData(transformed, copy_from=data)
+        
+        # Convert scale to ppm
+        result.scale_to_ppm()
 
-    # Update metadata
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': 'Complex fourier transform',
-            'real_only': real_only,
-            'inverse': inverse,
-            'negate_imaginaries': negate_imaginaries,
-            'sign_alteration': sign_alteration,
-            'bruk': bruk,
-            'input_real': np.isrealobj(data),
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+        # Update metadata
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': 'Complex fourier transform',
+                'real_only': real_only,
+                'inverse': inverse,
+                'negate_imaginaries': negate_imaginaries,
+                'sign_alteration': sign_alteration,
+                'bruk': bruk,
+                'input_real': np.isrealobj(data),
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        return result
 
-    return result
+    return transformed.view(type(data))
 
 # NMRPipe alias
 FT = fourier_transform
@@ -947,16 +1178,16 @@ FT.__name__ = "FT"  # Auto-generated
 
 
 def hilbert_transform(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     mirror_image: bool = False,
     temporary_zero_fill: bool = False,
-    size_time_domain: int = None,
+    size_time_domain: int | None = None,
     # Aliases
-    ps90_180: bool = None,
-    zf: bool = None,
-    td: bool = None,
-) -> NMRData:
+    ps90_180: bool | None = None,
+    zf: bool | None = None,
+    td: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a Hilbert transform to the last dimension of NMRData.
 
@@ -1002,33 +1233,36 @@ def hilbert_transform(
         mirrored = np.concatenate(
             (array, array[..., ::-1].conj()), axis=-1
         )
-        hilbert_data = hilbert(mirrored, axis=-1)
+        hilbert_data = np.asarray(hilbert(mirrored, axis=-1))
         result_array = hilbert_data[..., :array.shape[-1]]
     else:
         # Standard Hilbert transform
-        result_array = hilbert(array, axis=-1)
+        result_array = np.asarray(hilbert(array, axis=-1))
 
 
     # If temporary zero-filled, crop back
     if temporary_zero_fill:
         result_array = result_array[..., :original_shape[-1]]
 
-    result = NMRData(result_array, copy_from=data)
-    
-    # Update metadata
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': 'Hilbert transform',
-            'mirror_image': mirror_image,
-            'temporary_zero_fill': temporary_zero_fill,
-            'size_time_domain': size_time_domain,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+    if isinstance(data, NMRData):
+        result = NMRData(result_array, copy_from=data)
+        
+        # Update metadata
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': 'Hilbert transform',
+                'mirror_image': mirror_image,
+                'temporary_zero_fill': temporary_zero_fill,
+                'size_time_domain': size_time_domain,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+    else:
+        result = result_array
 
-    return result
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 HT = hilbert_transform
@@ -1038,7 +1272,7 @@ HT.__name__ = "HT"  # Auto-generated
 
 
 def phase(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     p0: float = 0.0,
     p1: float = 0.0,
@@ -1051,15 +1285,15 @@ def phase(
     #left_shift_point_count: int = 0,
     #sw: bool = False,
     # Aliases
-    inv: float = None,
-    ht: bool = None,
-    zf: bool = None,
-    exp: bool = None,
-    tc: float = None,
-    #rs: bool = None,
-    #ls: bool = None,
-    #sw: bool = None,
-) -> NMRData:
+    inv: bool | None = None,
+    ht: bool | None = None,
+    zf: bool | None = None,
+    exp: bool | None = None,
+    tc: float | None = None,
+    #rs: bool | None = None,
+    #ls: bool | None = None,
+    #sw: bool | None = None,
+) -> NMRArrayType:
     """
     Apply zero-order and first-order phase correction to the last dimension of the NMRData.
 
@@ -1087,9 +1321,14 @@ def phase(
     start_time = perf_counter()
     
     # Handle argument aliases
-    if inv is not None: invert = inv
-    if exp is not None: exponential_correction = exp
-    if tc is not None: decay_constant = tc
+    _resolve_aliases(
+        {
+            "mirror_image": ["ps90_180"],
+            "temporary_zero_fill": ["zf"],
+            "size_time_domain": ["td"],
+        },
+        locals()
+    )
     
     
     array = data.copy()
@@ -1111,23 +1350,24 @@ def phase(
     x = np.arange(npoints)
 
     if exponential_correction:
-        phase = np.deg2rad(p0 * np.exp(-decay_constant * x / npoints))
+        phase_array = np.deg2rad(p0 * np.exp(-decay_constant * x / npoints))
     else:
-        phase = np.deg2rad(p0 + p1*( x / npoints))
+        phase_array = np.deg2rad(p0 + p1*( x / npoints))
     
     if invert:
-        phase = -phase
+        phase_array = -phase_array
     
-    phase_correction = np.exp(1j * phase)
+    phase_correction = np.exp(1j * phase_array)
     
-    result = array * phase_correction
+    result = np.asarray(array) * phase_correction
     
     if temporary_zero_fill:
-        result_array = result_array[..., :original_shape[-1]]
+        result = result[..., :original_shape[-1]]
     
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
+    
+    if isinstance(data, NMRData):
+        result = NMRData(result, copy_from=data)
+        result.processing_history.append({
             'Function': "Phase Correction",
             'p0': p0,
             'p1': p1,
@@ -1136,12 +1376,11 @@ def phase(
             'decay_constant': decay_constant,
             'reconstruct_imaginaries': reconstruct_imaginaries,
             'temporary_zero_fill': temporary_zero_fill,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+            'time_elapsed_s': perf_counter() - start_time,
+            'time_elapsed_str': _format_elapsed_time(perf_counter() - start_time),
+        })
     
-    return result
+    return result.view(type(data))
 
 # NMRPipe alias
 PS = phase
@@ -1151,31 +1390,31 @@ PS.__name__ = "PS"  # Auto-generated
 
 
 def extract_region(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    start: str | int = None,
-    end: str | int = None,
-    start_y: str | int = None,
-    end_y: str | int = None,
+    start: str | int | None = None,
+    end: str | int | None = None,
+    start_y: str | int | None = None,
+    end_y: str | int | None = None,
     left_half: bool = False,
     right_half: bool = False,
     middle_half: bool = False,
     power_of_two: bool = False,
     adjust_spectral_width: bool = True,
-    multiple_of: int = None,
+    multiple_of: int | None = None,
     # Aliases
     #time: bool = None,
-    left: bool = None,
-    right: bool = None,
-    mid: bool = None,
-    pow2: bool = None,
-    sw: bool = None,
-    round: int = None,
-    x1: str = None,
-    xn: str = None,
-    y1: str = None,
-    yn: str = None,
-) -> NMRData:
+    left: bool | None = None,
+    right: bool | None = None,
+    mid: bool | None = None,
+    pow2: bool | None = None,
+    sw: bool | None = None,
+    round: int | None = None,
+    x1: str | None = None,
+    xn: str | None = None,
+    y1: str | None = None,
+    yn: str | None = None,
+) -> NMRArrayType:
     """
     Extract a region from the NMRData array, optionally adjusting spectral calibration.
 
@@ -1207,16 +1446,21 @@ def extract_region(
     start_time = perf_counter()
     
     # Handle aliases
-    if left is not None: left_half = left
-    if right is not None: right_half = right
-    if mid is not None: middle_half = mid
-    if pow2 is not None: power_of_two = pow2
-    if sw is not None: adjust_spectral_width = sw
-    if round is not None: multiple_of = round
-    if x1 is not None: start = x1
-    if xn is not None: end = xn
-    if y1 is not None: start_y = y1
-    if yn is not None: end_y = yn
+    _resolve_aliases(
+        {
+            "left_half": ["left"],
+            "right_half": ["right"],
+            "middle_half": ["mid"],
+            "power_of_two": ["pow2"],
+            "adjust_spectral_width": ["sw"],
+            "multiple_of": ["round"],
+            "start": ["x1"],
+            "end": ["xn"],
+            "start_y": ["y1"],
+            "end_y": ["yn"],
+        },
+        locals()
+    )
     
     result = data.copy()
     npoints = result.shape[-1]
@@ -1238,6 +1482,7 @@ def extract_region(
     # Convert coordinate-like strings to indices
     start_idx = _convert_to_index(result, start, npoints, default=0)
     end_idx = _convert_to_index(result, end, npoints, default=npoints - 1)
+    
     if result.ndim > 1:
         start_y_idx = _convert_to_index(result, start_y, nvectors, default=0, dim=-2)
         end_y_idx = _convert_to_index(result, end_y, nvectors, default=nvectors - 1, dim=-2)
@@ -1252,7 +1497,6 @@ def extract_region(
 
     # Calculate slice sizes
     x_size = end_idx - start_idx + 1
-    y_size = end_y_idx - start_y_idx + 1
     
     # Adjust size if rounding requested
     if power_of_two:
@@ -1263,51 +1507,33 @@ def extract_region(
         end_idx = start_idx + new_x_size - 1
         
     # Slice the data
-    if result.ndim > 1:
-        sliced = result[start_y_idx:end_y_idx+1, start_idx:end_idx+1]
-    else:
-        sliced = result[start_idx:end_idx+1]
     
-    new_data = NMRData(sliced, copy_from=result)
     
     if adjust_spectral_width:
-        dim = -1 
-        full_size = npoints
-        new_size = sliced.shape[dim]
-
-        # Adjust SW, ORI, and OBS based on ppm limits
-        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+        slicer = (slice(start_y_idx, end_y_idx + 1), slice(start_idx, end_idx + 1)) if result.ndim > 1 else slice(start_idx, end_idx + 1)
+        new_data = result[slicer]
+    else:
+        # Manual slicing on array level
+        array = np.asarray(result)
+        sliced = array[start_y_idx:end_y_idx+1, start_idx:end_idx+1] if result.ndim > 1 else array[start_idx:end_idx+1]
         
-        # Recalculate ppm scale and determine new max ppm based on trimmed size
-        ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
-        new_ppm_scale = ppm_scale[start_idx:end_idx+1]
-        ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
+        new_data = NMRData(sliced, copy_from=result) if isinstance(result, NMRData) else sliced.copy()
 
-        # Create new axis info dictionary
-        new_axis_dict = result.axes[dim].copy()
-        new_axis_dict['SW'] = sw * (new_size / full_size)
-        new_axis_dict['ORI'] = obs * ppm_max  # ORI = center frequency in Hz = OBS * ppm
-        new_axis_dict['OBS'] = obs  # unchanged
-        new_axis_dict['scale'] = new_ppm_scale
+    if isinstance(new_data, NMRData):
+        new_data.processing_history.append({
+            'Function': "Extract Region",
+            'start_x': start_idx,
+            'end_x': end_idx,
+            'start_y': start_y_idx,
+            'end_y': end_y_idx,
+            'shape_before': result.shape,
+            'shape_after': new_data.shape,
+            'adjusted_sw': adjust_spectral_width,
+            'time_elapsed_s': perf_counter() - start_time,
+            'time_elapsed_str': _format_elapsed_time(perf_counter() - start_time),
+        })
 
-        new_data.axes[dim] = new_axis_dict
-
-
-    elapsed = perf_counter() - start_time
-    new_data.processing_history.append({
-        'Function': "Extract Region",
-        'start_x': start_idx,
-        'end_x': end_idx,
-        'start_y': start_y_idx,
-        'end_y': end_y_idx,
-        'shape_before': result.shape,
-        'shape_after': sliced.shape,
-        'adjusted_sw': adjust_spectral_width,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
-
-    return new_data
+    return new_data.view(type(data))
 
 # NMRPipe alias
 EXT = extract_region
@@ -1315,17 +1541,177 @@ EXT.__doc__ = extract_region.__doc__  # Auto-generated
 EXT.__name__ = "EXT"  # Auto-generated
 
 
+def _pbc_time(
+    data: NMRArrayType,
+    *,
+    order: int,
+    noise_window_size: int,
+    min_baseline_fraction: float,
+    noise_adjustment_factor: float,
+    rms_noise_value: float,
+) -> NMRArrayType:
+    start_time = perf_counter()
+
+    npoints = data.shape[-1]
+    window_size = noise_window_size
+    min_baseline_pts = int(min_baseline_fraction * npoints)
+
+    if rms_noise_value == 0.0:
+        windows = [data[..., i:i + window_size] for i in range(0, npoints, window_size)]
+        noise_estimates = [np.std(w, axis=-1) for w in windows if w.shape[-1] == window_size]
+        if noise_estimates:
+            rms_noise_value = np.median(np.concatenate(noise_estimates), axis=-1)
+
+    baseline_threshold = rms_noise_value * noise_adjustment_factor
+
+    def fit_and_subtract_time(vector: np.ndarray) -> np.ndarray:
+        baseline_mask = np.abs(vector) < baseline_threshold
+        baseline_indices = np.where(baseline_mask)[0]
+
+        if len(baseline_indices) < min_baseline_pts:
+            baseline_indices = np.concatenate((np.arange(window_size), np.arange(npoints - window_size, npoints)))
+            baseline_indices = np.unique(baseline_indices)
+
+        if len(baseline_indices) < order + 1:
+            return vector
+
+        x_fit = baseline_indices
+        y_fit = vector[x_fit]
+        coeffs = np.polyfit(x_fit, y_fit, order)
+        baseline = np.polyval(coeffs, np.arange(npoints))
+        return vector - baseline
+
+    corrected_data = np.apply_along_axis(fit_and_subtract_time, axis=-1, arr=data)
+
+    if isinstance(corrected_data, NMRData):
+        elapsed = perf_counter() - start_time
+        corrected_data.processing_history.append({
+            'Function': "Time domain polynomial baseline correction",
+            'order': order,
+            'noise_window_size': noise_window_size,
+            'min_baseline_fraction': min_baseline_fraction,
+            'noise_adjustment_factor': noise_adjustment_factor,
+            'rms_noise_value': rms_noise_value,
+            'baseline_threshold': baseline_threshold,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
+
+    return cast(NMRArrayType, corrected_data)
+
+
+def _pbc_freq(
+    data: NMRArrayType,
+    *,
+    sub_start: int,
+    sub_end: int,
+    fit_start: int,
+    fit_end: int,
+    node_list: list[str | int | None] | None,
+    node_width: int,
+    order: int,
+    use_first_points: bool,
+    use_last_points: bool,
+    use_node_avg: bool,
+    sine_filter: bool,
+) -> NMRArrayType:
+    start_time = perf_counter()
+
+    result = data.copy()
+    npoints = result.shape[-1]
+
+    node_groups = []
+    if node_list is not None:
+        resolved_nodes = [_convert_to_index(result, n, npoints, default=-1) for n in node_list or []]
+        for center in resolved_nodes:
+            if center == -1: continue
+            
+            node_group_start = max(0, center - node_width)
+            node_group_end = min(npoints, center + node_width + 1)
+            node_group = list(range(node_group_start, node_group_end))
+            node_groups.extend(node_group)
+
+    node_groups = sorted(set(node_groups))
+
+    sub_start_idx = _convert_to_index(result, sub_start, npoints, default=0)
+    if sub_start_idx is None: sub_start_idx = 0
+    sub_end_idx = _convert_to_index(result, sub_end, npoints, default=npoints - 1)
+    if sub_end_idx is None: sub_end_idx = npoints - 1
+    
+    fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
+    if fit_start_idx is None: fit_start_idx = 0
+    fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
+    if fit_end_idx is None: fit_end_idx = npoints - 1
+    
+
+    def poly_model(x, *coeffs):
+        order = len(coeffs) - 1
+        y = np.zeros_like(x, dtype=np.float64)
+        for i, c in enumerate(coeffs):
+            y += c * x ** (order - i)
+        return y
+
+    def fit_and_subtract_freq(vector: np.ndarray) -> np.ndarray:
+        if node_groups:
+            x_fit = np.array(node_groups)
+            y_fit = vector[node_groups]
+        else:
+            x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
+            y_fit = vector[fit_start_idx:fit_end_idx + 1]
+
+        threshold = float(np.median(y_fit) + 1 * np.std(y_fit))
+        mask = y_fit < threshold
+
+        x_fit_masked = x_fit[mask]
+        y_fit_masked = y_fit[mask]
+
+        if len(x_fit_masked) < order + 1:
+            return vector
+
+        x_subtract = np.arange(sub_start_idx, sub_end_idx + 1).astype(np.float64)
+        p0 = np.ones(order + 1)
+        coeffs, _ = curve_fit(poly_model, x_fit_masked, y_fit_masked, p0=p0)
+        baseline = poly_model(x_subtract, *coeffs)
+
+        corrected = vector.copy()
+        corrected[sub_start_idx:sub_end_idx + 1] -= baseline
+        return corrected
+
+    corrected_data = np.apply_along_axis(fit_and_subtract_freq, axis=-1, arr=data)
+
+    if isinstance(corrected_data, NMRData):
+        elapsed = perf_counter() - start_time
+        corrected_data.processing_history.append({
+            'Function': "Frequency domain polynomial baseline correction",
+            'sub_start': sub_start,
+            'sub_end': sub_end,
+            'fit_start': fit_start,
+            'fit_end': fit_end,
+            'order': order,
+            'node_list': node_list,
+            'node_width': node_width,
+            'use_first_points': use_first_points,
+            'use_last_points': use_last_points,
+            'use_node_avg': use_node_avg,
+            'sine_filter': sine_filter,
+            'n_nodes': len(node_groups),
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
+
+    return cast(NMRArrayType, corrected_data)
+
 
 def polynomial_baseline_correction(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     sub_start: int = 0,
     sub_end: int = -1,
     fit_start: int = 0,
     fit_end: int = -1,
-    start: int = None,
-    end: int = None,
-    node_list: list[int] = None,
+    start: int | None = None,
+    end: int | None = None,
+    node_list: list[str | int | None] | None,
     node_width: int = 1,
     order: int = 4,
     initial_fit_nodes: int = 0,
@@ -1341,29 +1727,29 @@ def polynomial_baseline_correction(
     rms_noise_value: float = 0.0,
     
     # Aliases
-    sx1: int = None,
-    sxn: int = None,
-    fx1: int = None,
-    fxn: int = None,
-    x1: int = None,
-    xn: int = None,
-    nl: int = None,
-    nw: int = None,
-    ord: int = None,
-    nc: int = None,
-    first: int = None,
-    last: int = None,
-    avg: int = None,
-    filt: int = None,
+    sx1: int | None = None,
+    sxn: int | None = None,
+    fx1: int | None = None,
+    fxn: int | None = None,
+    x1: int | None = None,
+    xn: int | None = None,
+    nl: list[str | int | None] | None,
+    nw: int | None = None,
+    ord: int | None = None,
+    nc: int | None = None,
+    first: bool | None = None,
+    last: bool | None = None,
+    avg: bool | None = None,
+    filt: bool | None = None,
     
-    time: bool = None,
-    window: int = None,
-    frac: float = None,
-    nf: float = None,
-    noise: float = None,
-    #noseq: bool = None,
-    #nodmx: bool = None,
-) -> NMRData:
+    time: bool | None = None,
+    window: int | None = None,
+    frac: float | None = None,
+    nf: float | None = None,
+    noise: float | None = None,
+    #noseq: bool | None = None,
+    #nodmx: bool | None = None,
+) -> NMRArrayType:
     """
     Apply polynomial baseline correction to the last dimension of the NMRData.
 
@@ -1430,88 +1816,48 @@ def polynomial_baseline_correction(
     
     if domain == "time":
         # Handle aliases
-        if window is not None: noise_window_size = window
-        if frac is not None: min_baseline_fraction = frac
-        if nf is not None: noise_adjustment_factor = nf
-        if noise is not None: rms_noise_value = noise
-        
-        npoints = data.shape[-1]
-        window_size = noise_window_size
-        min_baseline_pts = int(min_baseline_fraction * npoints)
-        
-        # Estimate RMS noise value
-        if rms_noise_value == 0.0:
-            # Divide data into non-overlapping windows for each slice along the last dimension
-            windows = [data[..., i:i + window_size] for i in range(0, npoints, window_size)]
-            noise_estimates = [np.std(w, axis=-1) for w in windows if w.shape[-1] == window_size]
-            
-            if noise_estimates:
-                # Compute median RMS noise value across all windows
-                rms_noise_value = np.median(np.concatenate(noise_estimates), axis=-1)
-        
-        # Define baseline threshold
-        baseline_threshold = rms_noise_value * noise_adjustment_factor
-        
-        def fit_and_subtract(vector):
-            # Identify baseline points
-            baseline_mask = np.abs(vector) < baseline_threshold
-            baseline_indices = np.where(baseline_mask)[0]
-
-            # Ensure sufficient baseline points
-            if len(baseline_indices) < min_baseline_pts:
-                # Fallback to first and last points
-                baseline_indices = np.concatenate((np.arange(window_size), np.arange(npoints - window_size, npoints)))
-                baseline_indices = np.unique(baseline_indices)
-
-            if len(baseline_indices) < order + 1:
-                return vector
-
-            # Fit polynomial to baseline points
-            x_fit = baseline_indices
-            y_fit = vector[x_fit]
-            coeffs = np.polyfit(x_fit, y_fit, order)
-            baseline = np.polyval(coeffs, np.arange(npoints))
-
-            # Subtract baseline
-            corrected_vector = vector - baseline
-            return corrected_vector
-
-        # Apply correction along the last axis
-        corrected_data = np.apply_along_axis(fit_and_subtract, axis=-1, arr=data)
-        
-        elapsed = perf_counter() - start_time
-        corrected_data.processing_history.append(
+        _resolve_aliases(
             {
-                'Function': "Time domain polynomial baseline correction",
-                'order': order,
-                'noise_window_size': noise_window_size,
-                'min_baseline_fraction': min_baseline_fraction,
-                'noise_adjustment_factor': noise_adjustment_factor,
-                'rms_noise_value': rms_noise_value,
-                'baseline_threshold': baseline_threshold,
-                'time_elapsed_s': elapsed,
-                'time_elapsed_str': _format_elapsed_time(elapsed),
-            }
+                "noise_window_size": ["window"],
+                "min_baseline_fraction": ["frac"],
+                "noise_adjustment_factor": ["nf"],
+                "rms_noise_value": ["noise"],
+            },
+            locals()
         )
         
-        return corrected_data
+        return _pbc_time(
+            data,
+            order=order,
+            noise_window_size=noise_window_size,
+            min_baseline_fraction=min_baseline_fraction,
+            noise_adjustment_factor=noise_adjustment_factor,
+            rms_noise_value=rms_noise_value,
+        )
     
     elif domain == "frequency":
         # Handle aliases
-        if sx1 is not None: sub_start = sx1
-        if sxn is not None: sub_end = sxn
-        if fx1 is not None: fit_start = fx1
-        if fxn is not None: fit_end = fxn
-        if x1 is not None: start = x1
-        if xn is not None: end = xn
-        if nl is not None: node_list = nl
-        if nw is not None: node_width = nw
-        if ord is not None: order = ord
-        if nc is not None: initial_fit_nodes = nc
-        if first is not None: use_first_points = first
-        if last is not None: use_last_points = last
-        if avg is not None: use_node_avg = avg
-        if filt is not None: sine_filter = filt
+        _resolve_aliases(
+            {
+                "sub_start": ["sx1"],
+                "sub_end": ["sxn"],
+                "fit_start": ["fx1"],
+                "fit_end": ["fxn"],
+                "start": ["x1"],
+                "end": ["xn"],
+                "node_list": ["nl"],
+                "node_width": ["nw"],
+                "order": ["ord"],
+                "initial_fit_nodes": ["nc"],
+                "use_first_points": ["first"],
+                "use_last_points": ["last"],
+                "use_node_avg": ["avg"],
+                "sine_filter": ["filt"],
+            },
+            locals()
+        )
+
+
         
         # Overwrite subtraction region range and fit region range
         if start is not None:
@@ -1524,94 +1870,25 @@ def polynomial_baseline_correction(
         if sub_end == -1: sub_end = data.shape[-1] - 1
         if fit_end == -1: fit_end = data.shape[-1] - 1
         
-        result = data.copy()
-        npoints = result.shape[-1]
-        
-        node_groups = []
-        if node_list is not None:
-            node_list = [_convert_to_index(result, n, npoints, default=None) for n in node_list]
-            for center in node_list:
-                if center is None: continue
-                
-                node_group_start = max(0, center - node_width)
-                node_group_end = min(npoints, center + node_width + 1)
-                node_group = list(range(node_group_start, node_group_end))
-                node_groups.extend(node_group)
-
-        node_groups = sorted(set(node_groups))
-        
-        sub_start_idx = _convert_to_index(result, sub_start, npoints, default=0)
-        sub_end_idx = _convert_to_index(result, sub_end, npoints, default=npoints - 1)
-        fit_start_idx = _convert_to_index(result, fit_start, npoints, default=0)
-        fit_end_idx = _convert_to_index(result, fit_end, npoints, default=npoints - 1)
-        
-        def poly_model(x, *coeffs):
-            # coeffs are in descending order: c0*x^order + c1*x^(order-1) + ...
-            order = len(coeffs) - 1
-            y = np.zeros_like(x, dtype=np.float64)
-            for i, c in enumerate(coeffs):
-                y += c * x ** (order - i)
-            return y
-        
-        def fit_and_subtract(vector: np.ndarray) -> np.ndarray:
-            if node_groups:
-                x_fit = np.array(node_groups)
-                y_fit = vector[node_groups]
-            else:
-                # Default to using the entire fit range
-                x_fit = np.arange(fit_start_idx, fit_end_idx + 1)
-                y_fit = vector[fit_start_idx:fit_end_idx + 1]
-            
-            threshold = float(np.median(y_fit) + 1 * np.std(y_fit))
-            print(f"{threshold=}")
-            mask = y_fit < threshold
-            
-            x_fit_masked = x_fit[mask]
-            y_fit_masked = y_fit[mask]
-            
-            if len(x_fit_masked) < order + 1:
-                return vector
-            
-            # Subtraction range
-            x_subtract = np.arange(sub_start_idx, sub_end_idx + 1).astype(np.float64)
-
-        
-            p0 = np.ones(order + 1)
-            coeffs, _ = curve_fit(poly_model, x_fit_masked, y_fit_masked, p0=p0)
-
-            print(list(coeffs))
-            
-            baseline = poly_model(x_subtract, *coeffs)
-            
-            corrected = vector.copy()
-            corrected[sub_start_idx:sub_end_idx + 1] -= baseline
-            
-            return corrected
-        
-        corrected_data = np.apply_along_axis(lambda v: fit_and_subtract(v), axis=-1, arr=data)
-        
-        elapsed = perf_counter() - start_time
-        corrected_data.processing_history.append(
-            {
-                'Function': "Frequency domain polynomial baseline correction",
-                'sub_start': sub_start,
-                'sub_end': sub_end,
-                'fit_start': fit_start,
-                'fit_end': fit_end,
-                'order': order,
-                'node_list': node_list,
-                'node_width': node_width,
-                'use_first_points': use_first_points,
-                'use_last_points': use_last_points,
-                'use_node_avg': use_node_avg,
-                'sine_filter': sine_filter,
-                'n_nodes': len(node_groups),
-                'time_elapsed_s': elapsed,
-                'time_elapsed_str': _format_elapsed_time(elapsed),
-            }
+        return _pbc_freq(
+            data,
+            sub_start=sub_start,
+            sub_end=sub_end,
+            fit_start=fit_start,
+            fit_end=fit_end,
+            node_list=node_list,
+            node_width=node_width,
+            order=order,
+            use_first_points=use_first_points,
+            use_last_points=use_last_points,
+            use_node_avg=use_node_avg,
+            sine_filter=sine_filter,
         )
         
-        return corrected_data
+    else:
+        raise ValueError(f"Unknown domain '{domain}'. Must be 'time' or 'frequency'.")
+
+
 
 # NMRPipe alias
 POLY = polynomial_baseline_correction
@@ -1621,13 +1898,13 @@ POLY.__name__ = "POLY"  # Auto-generated
 
 
 def transpose(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    axes: list[int] = None,
+    axes: list[int] | None = None,
     hyper_complex: bool = False,
     # Aliases
     hyper: bool = False,
-) -> NMRData:
+) -> NMRArrayType:
     """
     Transpose the data and reorder metadata accordingly.
 
@@ -1643,49 +1920,50 @@ def transpose(
         NMRData: Transposed data.
     """
     start_time = perf_counter()
-
-    if axes:
-        axes = axes[0]
-    else:
-        axes = list(range(data.ndim))
-        axes.reverse()
     
-    if hyper:
-        raise NotImplementedError
-    else:
-        result = super(NMRData, data).transpose(*axes)
+    _resolve_aliases(
+        {
+            "hyper_complex": ["hyper"],
+        },
+        locals()
+    )
+    
+    if hyper_complex:
+        raise NotImplementedError("Hyper complex transpose is not yet implemented.")
+    
+    ndim = data.ndim
+    if axes is None:
+        axes = list(reversed(range(ndim)))
+    
+    result = data.transpose(*axes)
+
         
 
-    # Copy attributes
-    for attr in data._custom_attrs:
-        match attr:
-            # Reorder and copy
-            case 'axes':
-                setattr(result, attr, [getattr(data, attr)[ax] for ax in axes])
-            # Deep copy
-            case _:
-                setattr(result, attr, copy.deepcopy(getattr(data, attr)))
-    
-    
-    is_interleaved = result.axes[-1].get("interleaved_data", None)
-    if is_interleaved == True:
-        result = _interleaved_to_complex(result)
-        result.axes[-1]["interleaved_data"] = False
+    if isinstance(data, NMRData):
+        new_result = NMRData(result, copy_from=data)
 
-    # Record processing history
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
+        # Reorder axes metadata
+        new_result.axes = [copy.deepcopy(data.axes[i]) for i in axes]
+
+        # Update 'interleaved_data' handling if present
+        if new_result.axes[-1].get("interleaved_data", False):
+            new_result = _interleaved_to_complex(new_result)
+            new_result.axes[-1]["interleaved_data"] = False
+
+        # Append to processing history
+        elapsed = perf_counter() - start_time
+        new_result.processing_history.append({
             'Function': "Transpose",
-            'axes': [list(axes) if hasattr(axes, '__iter__') else [axes]],
+            'axes': list(axes),
             'shape_before': data.shape,
-            'shape_after': result.shape,
+            'shape_after': new_result.shape,
             'time_elapsed_s': elapsed,
             'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+        })
 
-    return result
+        return cast(NMRArrayType, new_result)
+
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 TP = transpose
@@ -1698,20 +1976,20 @@ ZTP.__name__ = "ZTP"  # Auto-generated
 
 
 def add_constant(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    start: str | int = None,
-    end: str | int = None,
-    constant: float = None,
-    constant_real: float = None,
-    constant_imaginary: float = None,
+    start: str | int | None = None,
+    end: str | int | None = None,
+    constant: float | None = None,
+    constant_real: float | None = None,
+    constant_imaginary: float | None = None,
     # Alias
-    r: float = None,
-    i: float = None,
-    c: float = None,
-    x1: str | int = None,
-    xn: str | int = None,
-) -> NMRData:
+    r: float | None = None,
+    i: float | None = None,
+    c: float | None = None,
+    x1: str | int | None = None,
+    xn: str | int | None = None,
+) -> NMRArrayType:
     """
     Add a constant with the NMRData.
 
@@ -1736,11 +2014,16 @@ def add_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    if r is not None: constant_real = r
-    if i is not None: constant_imaginary = i
-    if c is not None: constant = c
-    if x1 is not None: start = x1
-    if xn is not None: end = xn
+    _resolve_aliases(
+        {
+            "constant_real": ["r"],
+            "constant_imaginary": ["i"],
+            "constant": ["c"],
+            "start": ["x1"],
+            "end": ["xn"],
+        },
+        locals()
+    )
     
     
     if (
@@ -1789,24 +2072,27 @@ def add_constant(
         elif constant is not None:
             array[..., start_idx:end_idx+1] += constant
 
-    result = NMRData(array, copy_from=data)
 
+    if isinstance(data, NMRData):
+        result = NMRData(array, copy_from=data)
 
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Add constant",
-            'start': start,
-            'end': end,
-            'constant': constant,
-            'constant_real': constant_real,
-            'constant_imaginary': constant_imaginary,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Add constant",
+                'start': start,
+                'end': end,
+                'constant': constant,
+                'constant_real': constant_real,
+                'constant_imaginary': constant_imaginary,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        
+        return cast(NMRArrayType, result)
 
-    return result
+    return cast(NMRArrayType, array)
 
 # NMRPipe alias
 ADD = add_constant
@@ -1815,20 +2101,20 @@ ADD.__name__ = "ADD"  # Auto-generated
 
 
 def multiply_constant(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    start: str | int = None,
-    end: str | int = None,
-    constant: float = None,
-    constant_real: float = None,
-    constant_imaginary: float = None,
+    start: str | int | None = None,
+    end: str | int | None = None,
+    constant: float | None = None,
+    constant_real: float | None = None,
+    constant_imaginary: float | None = None,
     # Alias
-    r: float = None,
-    i: float = None,
-    c: float = None,
-    x1: str | int = None,
-    xn: str | int = None,
-) -> NMRData:
+    r: float | None = None,
+    i: float | None = None,
+    c: float | None = None,
+    x1: str | int | None = None,
+    xn: str | int | None = None,
+) -> NMRArrayType:
     """
     Multiply a constant with the NMRData.
 
@@ -1853,11 +2139,18 @@ def multiply_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    if r is not None: constant_real = r
-    if i is not None: constant_imaginary = i
-    if c is not None: constant = c
-    if x1 is not None: start = x1
-    if xn is not None: end = xn
+    _resolve_aliases(
+        {
+            "constant_real": ["r"],
+            "constant_imaginary": ["i"],
+            "constant": ["c"],
+            "start": ["x1"],
+            "end": ["xn"],
+        },
+        locals()
+    )
+
+
     
     
     if (
@@ -1906,24 +2199,24 @@ def multiply_constant(
         elif constant is not None:
             array[..., start_idx:end_idx+1] *= constant
 
-    result = NMRData(array, copy_from=data)
+    if isinstance(data, NMRData):
+        result = NMRData(array, copy_from=data)
 
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Multiply constant",
+                'start': start,
+                'end': end,
+                'constant': constant,
+                'constant_real': constant_real,
+                'constant_imaginary': constant_imaginary,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
 
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Multiply constant",
-            'start': start,
-            'end': end,
-            'constant': constant,
-            'constant_real': constant_real,
-            'constant_imaginary': constant_imaginary,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
-
-    return result
+    return cast(NMRArrayType, array)
 
 # NMRPipe alias
 MULT = multiply_constant
@@ -1932,20 +2225,20 @@ MULT.__name__ = "MULT"  # Auto-generated
 
 
 def set_to_constant(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    start: str | int = None,
-    end: str | int = None,
+    start: str | int | None = None,
+    end: str | int | None = None,
     constant: float = 0.0,
     constant_real: float = 0.0,
     constant_imaginary: float = 0.0,
     # Alias
-    r: float = None,
-    i: float = None,
-    c: float = None,
-    x1: str | int = None,
-    xn: str | int = None,
-) -> NMRData:
+    r: float | None = None,
+    i: float | None = None,
+    c: float | None = None,
+    x1: str | int | None = None,
+    xn: str | int | None = None,
+) -> NMRArrayType:
     """
     Set a range in the last dimension of NMRData to a constant.
 
@@ -1970,11 +2263,17 @@ def set_to_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    if r is not None: constant_real = r
-    if i is not None: constant_imaginary = i
-    if c is not None: constant = c
-    if x1 is not None: start = x1
-    if xn is not None: end = xn
+    _resolve_aliases(
+        {
+            "constant_real": ["r"],
+            "constant_imaginary": ["i"],
+            "constant": ["c"],
+            "start": ["x1"],
+            "end": ["xn"],
+        },
+        locals()
+    )
+
 
     if (
         constant is None
@@ -2016,24 +2315,27 @@ def set_to_constant(
         elif constant is not None:
             array[..., start_idx:end_idx+1] = constant
 
-    result = NMRData(array, copy_from=data)
 
+    if isinstance(data, NMRData):
+        result = NMRData(array, copy_from=data)
 
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Set to constant",
-            'start': start,
-            'end': end,
-            'constant': constant,
-            'constant_real': constant_real,
-            'constant_imaginary': constant_imaginary,
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Set to constant",
+                'start': start,
+                'end': end,
+                'constant': constant,
+                'constant_real': constant_real,
+                'constant_imaginary': constant_imaginary,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        
+        return cast(NMRArrayType, result)
 
-    return result
+    return cast(NMRArrayType, array)
 
 # NMRPipe alias
 SET = set_to_constant
@@ -2041,7 +2343,7 @@ SET.__doc__ = set_to_constant.__doc__  # Auto-generated
 SET.__name__ = "SET"  # Auto-generated
 
 
-def delete_imaginaries(data: NMRData) -> NMRData:
+def delete_imaginaries(data: NMRArrayType) -> NMRArrayType:
     """
     Discard the imaginary part of complex-valued NMRData.
 
@@ -2057,20 +2359,22 @@ def delete_imaginaries(data: NMRData) -> NMRData:
     real_data = np.real(data).copy()
 
     # Create new NMRData object with real data and preserved metadata
-    result = NMRData(real_data, copy_from=data)
+    if isinstance(data, NMRData):
+        result = NMRData(real_data, copy_from=data)
 
-    # Record processing history
-    elapsed = perf_counter() - start_time
-    result.processing_history.append({
-        'Function': "Delete imaginary part",
-        'imag_removed': True,
-        'dtype_before': str(data.dtype),
-        'dtype_after': str(real_data.dtype),
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
+        # Record processing history
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Delete imaginary part",
+            'imag_removed': True,
+            'dtype_before': str(data.dtype),
+            'dtype_after': str(real_data.dtype),
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
+        return cast(NMRArrayType, result)
 
-    return result
+    return cast(NMRArrayType, real_data)
 
 # NMRPipe alias
 DI = delete_imaginaries
@@ -2078,7 +2382,7 @@ DI.__doc__ = delete_imaginaries.__doc__  # Auto-generated
 DI.__name__ = "DI"  # Auto-generated
 
 
-def null(data: NMRData) -> NMRData:
+def null(data: NMRArrayType) -> NMRArrayType:
     """
     Leave data unchanged.
 
@@ -2092,14 +2396,16 @@ def null(data: NMRData) -> NMRData:
     
     result = data.copy()
     
-    elapsed = perf_counter() - start_time
-    result.processing_history.append(
-        {
-            'Function': "Null",
-            'time_elapsed_s': elapsed,
-            'time_elapsed_str': _format_elapsed_time(elapsed),
-        }
-    )
+    if isinstance(result, NMRData):
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Null",
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
+        
     return result
 
 # NMRPipe alias
@@ -2109,12 +2415,12 @@ NULL.__name__ = "NULL"  # Auto-generated
 
 
 def reverse(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     adjust_spectral_width: bool = True,
     # Aliases
-    sw: bool = None,
-) -> NMRData:
+    sw: bool | None = None,
+) -> NMRArrayType:
     """
     Reverse NMRData in the last dimension.
 
@@ -2131,53 +2437,36 @@ def reverse(
     start_time = perf_counter()
     
     # Handle aliases
-    if sw is not None: adjust_spectral_width = sw
+    _resolve_aliases(
+        {
+            "adjust_spectral_width": ["sw"],
+        },
+        locals()
+    )
     
-    reversed_data = data[..., ::-1]
-
-    
-    new_data = NMRData(reversed_data, copy_from=data)
     
     if adjust_spectral_width:
-        dim = -1 
-        full_size = data.shape[dim]
-        new_size = new_data.shape[dim]
-
-        # Adjust SW, ORI, and OBS based on ppm limits
-        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+        result = data[..., ::-1]
+    
+    else:
+        reversed_array = data[..., ::-1]
         
-        new_axis_dict = data.axes[dim].copy()
-        
-        if data.axes[dim]["unit"] == "pts":
-            # Calculate the ORI adjustment by one point equivalent
-            point_shift = sw / full_size
-            new_ori = ori + point_shift # Adjust ORI by one point shift
-            new_ppm_scale = new_axis_dict['scale'][::-1] # Reverse the ppm scale
-        
+        if isinstance(data, NMRData):
+            result = NMRData(reversed_array, copy_from=data)
         else:
-            # Recalculate ppm scale 
-            ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
-            new_ppm_scale = ppm_scale[::-1]  # Reverse the ppm scale
-            ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
-            
-            new_ori = obs * ppm_max # Adjust ORI to reflect the new ppm max
-
-        new_axis_dict['SW'] = sw # remains unchanged
-        new_axis_dict['ORI'] = new_ori
-        new_axis_dict['OBS'] = obs # OBS remains unchanged
-        new_axis_dict['scale'] = new_ppm_scale
-        new_data.axes[dim] = new_axis_dict
+            result = reversed_array
 
 
-    elapsed = perf_counter() - start_time
-    new_data.processing_history.append({
-        'Function': "Reverse data",
-        'adjusted_sw': adjust_spectral_width,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
+    if isinstance(result, NMRData):
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Reverse data",
+            'adjusted_sw': adjust_spectral_width,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
 
-    return new_data
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 REV = reverse
@@ -2186,20 +2475,20 @@ REV.__name__ = "REV"  # Auto-generated
 
 
 def right_shift(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    shift_amount: int = 0,
+    shift_amount: str | int = 0,
     adjust_spectral_width: bool = True,
     # Aliases
-    rs: int = None,
-    sw: bool = None,
-) -> NMRData:
+    rs:  str | int | None = None,
+    sw: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a right shift and zero pad to the data in the last dimension.
 
     Args:
         data (NMRData): Input NMR dataset.
-        shift_amount (int): Number of points to shift. Positive for right shift, negative for left shift.
+        shift_amount (int | str): Amount to shift (e.g. 10, "3 ppm", "1000 pts", "10%").
         adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
         
     Aliases:
@@ -2212,14 +2501,20 @@ def right_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    if rs is not None: shift_amount = rs
-    if sw is not None: adjust_spectral_width = sw
+    _resolve_aliases(
+        {
+            "shift_amount": ["rs"],
+            "adjust_spectral_width": ["sw"],
+        },
+        locals()
+    )
     
     dim = -1 
     npoints = data.shape[dim]
-    shift_points = int(np.round(shift_amount))
     
-    shift_points = max(min(shift_points, npoints), -npoints)
+    shift_points = _convert_to_index(data, shift_amount, npoints, default=0)
+    
+    shift_points = int(np.clip(shift_points, -npoints, npoints))
     
     shifted_data = np.zeros_like(data)
     if shift_points > 0:
@@ -2231,44 +2526,40 @@ def right_shift(
     else:
         shifted_data = data.copy()
     
-    new_data = NMRData(shifted_data, copy_from=data)
-    
-    if adjust_spectral_width:
-        sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
-        axis_unit = data.axes[dim].get("unit", "pts")
-        
-        point_shift = sw / npoints
+    if isinstance(data, NMRData):
+        result = NMRData(shifted_data, copy_from=data)
 
-        
-        # Adjust ORI based on shift
-        if axis_unit == "pts":
-            new_ori = ori - (point_shift * shift_points)
-        else:
-            # Recalculate ppm scale
-            ppm_scale = get_ppm_scale(npoints, sw, ori, obs)
-            new_ppm_scale = np.roll(ppm_scale, shift_points)
-            new_ori = obs * new_ppm_scale[0]
+        if adjust_spectral_width:
+            sw, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+            if sw is None or ori is None or obs is None:
+                raise ValueError(f"Missing SW, ORI, or OBS in axis {dim} metadata. Found: SW={sw}, ORI={ori}, OBS={obs}")
+            
+            unit = data.axes[dim].get("unit", "pts").lower()
+            point_shift = sw / npoints
 
-        # Update axis dictionary
-        new_axis_dict = data.axes[dim].copy()
-        new_axis_dict['SW'] = sw  # SW remains unchanged
-        new_axis_dict['ORI'] = new_ori
-        new_axis_dict['OBS'] = obs  # OBS remains unchanged
-        new_axis_dict['scale'] = np.roll(new_axis_dict['scale'], shift_points)
+            if unit == "pts":
+                new_ori = ori - (point_shift * shift_points)
+            else:
+                ppm_scale = get_ppm_scale(npoints, sw, ori, obs)
+                new_ppm_scale = np.roll(ppm_scale, shift_points)
+                new_ori = obs * new_ppm_scale[0]
 
-        new_data.axes[dim] = new_axis_dict
+            axis = data.axes[dim].copy()
+            axis["ORI"] = new_ori
+            axis["scale"] = np.roll(axis["scale"], shift_points)
+            result.axes[dim] = axis
 
+        result.processing_history.append({
+            'Function': "Right shift data",
+            'shift_amount': shift_amount,
+            'adjusted_sw': adjust_spectral_width,
+            'time_elapsed_s': perf_counter() - start_time,
+            'time_elapsed_str': _format_elapsed_time(perf_counter() - start_time),
+        })
+    else:
+        result = shifted_data
 
-    elapsed = perf_counter() - start_time
-    new_data.processing_history.append({
-        'Function': "Right shift data",
-        'shift_amount': shift_amount,
-        'adjusted_sw': adjust_spectral_width,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
-
-    return new_data
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 RS = right_shift
@@ -2277,24 +2568,24 @@ RS.__name__ = "RS"  # Auto-generated
 
 
 def left_shift(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    shift_amount: int = 0,
+    shift_amount: str | int = 0,
     adjust_spectral_width: bool = True,
     # Aliases
-    rs: int = None,
-    sw: bool = None,
-) -> NMRData:
+    ls:  str | int | None = None,
+    sw: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a left shift and zero pad to the data in the last dimension.
 
     Args:
         data (NMRData): Input NMR dataset.
-        shift_amount (int): Number of points to shift. Positive for left shift, negative for right shift.
+        shift_amount (int | str): Amount to shift (e.g. 10, "3 ppm", "1000 pts", "10%").
         adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
         
     Aliases:
-        rs: Alias for shift_amount.
+        ls: Alias for shift_amount.
         sw: Alias for adjust_spectral_width.
 
     Returns:
@@ -2303,24 +2594,33 @@ def left_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    if rs is not None: shift_amount = rs
-    if sw is not None: adjust_spectral_width = sw
+    _resolve_aliases(
+        {
+            "shift_amount": ["ls"],
+            "adjust_spectral_width": ["sw"],
+        },
+        locals()
+    )
     
+    shift_points = _convert_to_index(data, shift_amount, data.shape[-1], default=0)
     
-    new_data = right_shift(data, shift_amount*-1, adjust_spectral_width)
-    new_data.processing_history.pop()
+    result = right_shift(data, shift_amount=-shift_points, adjust_spectral_width=adjust_spectral_width)
+    
+    if isinstance(result, NMRData):
+        result.processing_history.pop()
 
+        elapsed = perf_counter() - start_time
+        result.processing_history.append(
+            {
+                'Function': "Left shift data",
+                'shift_amount': shift_amount,
+                'adjusted_sw': adjust_spectral_width,
+                'time_elapsed_s': elapsed,
+                'time_elapsed_str': _format_elapsed_time(elapsed),
+            }
+        )
 
-    elapsed = perf_counter() - start_time
-    new_data.processing_history.append({
-        'Function': "Left shift data",
-        'shift_amount': shift_amount,
-        'adjusted_sw': adjust_spectral_width,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
-
-    return new_data
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 LS = left_shift
@@ -2329,25 +2629,25 @@ LS.__name__ = "LS"  # Auto-generated
 
 
 def circular_shift(
-    data: NMRData,
+    data: NMRArrayType,
     *,
-    right_shift_amount: int = 0,
-    left_shift_amount: int = 0,
+    right_shift_amount: str | int = 0,
+    left_shift_amount:  str | int = 0,
     negate_shifted: bool = False,
     adjust_spectral_width: bool = True,
     # Aliases
-    rs: int = None,
-    ls: int = None,
-    neg: bool = None,
-    sw: bool = None,
-) -> NMRData:
+    rs:  str | int | None = None,
+    ls:  str | int | None = None,
+    neg: bool | None = None,
+    sw: bool | None = None,
+) -> NMRArrayType:
     """
     Apply a circular shift to the data in the last dimension.
 
     Args:
         data (NMRData): Input NMR dataset.
-        right_shift_amount (int): Number of points to right shift.
-        left_shift_amount (int): Number of points to left shift.
+        right_shift_amount (int | str): Shift right by this amount (e.g., 100, "5 ppm").
+        left_shift_amount (int | str): Shift left by this amount.
         negate_shifted (bool): If True, negate the shifted data.
         adjust_spectral_width (bool): If True, adjust SW, ORI, and OBS metadata after shifting.
 
@@ -2363,63 +2663,70 @@ def circular_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    if rs is not None: right_shift_amount = rs
-    if ls is not None: left_shift_amount = ls
-    if neg is not None: negate_shifted = neg
-    if sw is not None: adjust_spectral_width = sw
+    _resolve_aliases(
+        {
+            "right_shift_amount": ["rs"],
+            "left_shift_amount": ["ls"],
+            "negate_shifted": ["neg"],
+            "adjust_spectral_width": ["sw"],
+        },
+        locals()
+    )
     
     if right_shift_amount != 0 and left_shift_amount != 0:
-        raise ValueError("Specify only one of right_shift_amount or left_shift_amount, not both.")
-    
-    
-    shift_amount = right_shift_amount if right_shift_amount != 0 else -left_shift_amount
+        raise ValueError("Specify only one of right_shift_amount (rs) or left_shift_amount (ls), not both.")
     
     dim = -1
     npoints = data.shape[dim]
-    shift_amount = shift_amount % npoints
     
-    shifted_data = np.roll(data, shift_amount, axis=dim)
+    shift_spec = right_shift_amount if right_shift_amount else f"-{left_shift_amount}"
+    shift_points = _convert_to_index(data, shift_spec, npoints, default=0)
+    shift_points = shift_points % npoints
     
-    if negate_shifted:
-        if shift_amount > 0:
-            shifted_data[..., :shift_amount] *= -1
-        elif shift_amount < 0:
-            shifted_data[..., shift_amount:] *= -1
     
-    new_data = NMRData(shifted_data, copy_from=data)
+    shifted_array = np.roll(data, shift_points, axis=dim)
+    
+    if negate_shifted and shift_points > 0:
+        slicer = [slice(None)] * data.ndim
+        slicer[dim] = slice(0, shift_points)
+        shifted_array[tuple(slicer)] *= -1
+    
+    if isinstance(data, NMRData):
+        new_data = NMRData(shifted_array, copy_from=data)
 
+        if adjust_spectral_width:
+            axis = data.axes[dim]
+            sw_value = axis.get("SW")
+            ori = axis.get("ORI")
+            obs = axis.get("OBS")
 
-    if adjust_spectral_width:
-        # Extract SW, ORI, OBS
-        sw_value, ori, obs = (data.axes[dim][k] for k in ("SW", "ORI", "OBS"))
+            if sw_value is None or ori is None or obs is None:
+                raise ValueError(f"Missing SW, ORI, or OBS in axis {dim} metadata.")
 
-        # Calculate the point shift adjustment
-        point_shift = sw_value / npoints
+            point_shift = sw_value / npoints
+            new_ori = ori - point_shift * shift_points
 
-        # Adjust ORI based on shift
-        new_ori = ori - (point_shift * shift_amount)
+            axis_new = axis.copy()
+            axis_new["ORI"] = new_ori
+            axis_new["scale"] = np.roll(axis["scale"], shift_points)
+            axis_new["SW"] = sw_value
+            axis_new["OBS"] = obs
 
-        # Update axis dictionary
-        new_axis_dict = data.axes[dim].copy()
-        new_axis_dict['SW'] = sw_value  # SW remains unchanged
-        new_axis_dict['ORI'] = new_ori
-        new_axis_dict['OBS'] = obs  # OBS remains unchanged
-        new_axis_dict['scale'] = np.roll(new_axis_dict['scale'], shift_amount)
+            new_data.axes[dim] = axis_new
 
-        new_data.axes[dim] = new_axis_dict
+        new_data.processing_history.append({
+            'Function': "Circular shift data",
+            'shift_amount': shift_points,
+            'negate_shifted': negate_shifted,
+            'adjusted_sw': adjust_spectral_width,
+            'time_elapsed_s': perf_counter() - start_time,
+            'time_elapsed_str': _format_elapsed_time(perf_counter() - start_time),
+        })
 
+    else:
+        new_data = shifted_array
 
-    elapsed = perf_counter() - start_time
-    new_data.processing_history.append({
-        'Function': "Circular shift data",
-        'shift_amount': shift_amount,
-        'negate_shifted': negate_shifted,
-        'adjusted_sw': adjust_spectral_width,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
-
-    return new_data
+    return cast(NMRArrayType, new_data)
 
 # NMRPipe alias
 CS = circular_shift
@@ -2428,7 +2735,7 @@ CS.__name__ = "CS"  # Auto-generated
 
 
 def manipulate_sign(
-    data: NMRData,
+    data: NMRArrayType,
     *,
     negate_all: bool = False,
     negate_reals: bool = False,
@@ -2439,15 +2746,15 @@ def manipulate_sign(
     absolute_value: bool = False,
     replace_with_sign: bool = False,
     # Aliases
-    ri: bool = None,
-    r: bool = None,
-    i: bool = None,
-    left: bool = None,
-    right: bool = None,
-    alt: bool = None,
-    abs: bool = None,
-    sign: bool = None,
-) -> NMRData:
+    ri: bool | None = None,
+    r: bool | None = None,
+    i: bool | None = None,
+    left: bool | None = None,
+    right: bool | None = None,
+    alt: bool | None = None,
+    abs: bool | None = None,
+    sign: bool | None = None,
+) -> NMRArrayType:
     """
     Apply various sign manipulations to the NMR data.
 
@@ -2478,14 +2785,21 @@ def manipulate_sign(
     start_time = perf_counter()
     
     # Handle aliases
-    if ri is not None: negate_all = ri
-    if r is not None: negate_reals = r
-    if i is not None: negate_imaginaries = i
-    if left is not None: negate_left_half = left
-    if right is not None: negate_right_half = right
-    if alt is not None: alternate_sign = alt
-    if abs is not None: absolute_value = abs
-    if sign is not None: replace_with_sign = sign
+    _resolve_aliases(
+        {
+            "negate_all": ["ri"],
+            "negate_reals": ["r"],
+            "negate_imaginaries": ["i"],
+            "negate_left_half": ["left"],
+            "negate_right_half": ["right"],
+            "alternate_sign": ["alt"],
+            "absolute_value": ["abs"],
+            "replace_with_sign": ["sign"],
+        },
+        locals()
+    )
+
+
     
     result = data.copy()
     npoints = result.shape[-1]
@@ -2519,24 +2833,86 @@ def manipulate_sign(
     if replace_with_sign:
         result = np.sign(result)
 
-    elapsed = perf_counter() - start_time
-    result.processing_history.append({
-        'Function': "Sign manipulation",
-        'negate_all': negate_all,
-        'negate_reals': negate_reals,
-        'negate_imaginaries': negate_imaginaries,
-        'negate_left_half': negate_left_half,
-        'negate_right_half': negate_right_half,
-        'alternate_sign': alternate_sign,
-        'absolute_value': absolute_value,
-        'replace_with_sign': replace_with_sign,
-        'time_elapsed_s': elapsed,
-        'time_elapsed_str': _format_elapsed_time(elapsed),
-    })
+    if isinstance(result, NMRData):
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Sign manipulation",
+            'negate_all': negate_all,
+            'negate_reals': negate_reals,
+            'negate_imaginaries': negate_imaginaries,
+            'negate_left_half': negate_left_half,
+            'negate_right_half': negate_right_half,
+            'alternate_sign': alternate_sign,
+            'absolute_value': absolute_value,
+            'replace_with_sign': replace_with_sign,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
 
-    return result
+    return cast(NMRArrayType, result)
 
 # NMRPipe alias
 SIGN = manipulate_sign
 SIGN.__doc__ = manipulate_sign.__doc__  # Auto-generated
 SIGN.__name__ = "SIGN"  # Auto-generated
+
+
+def modulus(
+    data: NMRArrayType,
+    *,
+    modulus: bool = True,
+    modulus_squared: bool = False,
+    # Aliases
+    mod: bool | None = None,
+    pow: bool | None = None,
+) -> NMRArrayType:
+    """
+    Compute the modulus (magnitude) or squared modulus of complex NMR data.
+
+    Args:
+        data (NMRData or np.ndarray): Complex-valued input NMR dataset.
+        modulus (bool): If True, compute the modulus (|z|).
+        modulus_squared (bool): If True, compute the squared modulus (|z|^2).
+
+    Aliases:
+        mod: Alias for modulus.
+        pow: Alias for modulus_squared.
+
+    Returns:
+        NMRData or np.ndarray: Data after applying modulus or modulus squared.
+    """
+    start_time = perf_counter()
+    
+    # Handle aliases
+    _resolve_aliases(
+        {
+            "modulus": ["mod"],
+            "modulus_squared": ["pow"],
+        },
+        locals()
+    )
+    
+    if modulus_squared:
+        result_array = np.real(data) ** 2 + np.imag(data) ** 2
+    else:
+        result_array = np.abs(data)
+
+
+    if isinstance(data, NMRData):
+        result = NMRData(result_array, copy_from=data)
+        elapsed = perf_counter() - start_time
+        result.processing_history.append({
+            'Function': "Modulus",
+            'modulus': modulus,
+            'modulus_squared': modulus_squared,
+            'time_elapsed_s': elapsed,
+            'time_elapsed_str': _format_elapsed_time(elapsed),
+        })
+        return result
+
+    return cast(NMRArrayType, result_array)
+
+# NMRPipe alias
+MC = modulus
+MC.__doc__ = modulus.__doc__  # Auto-generated
+MC.__name__ = "MC"  # Auto-generated

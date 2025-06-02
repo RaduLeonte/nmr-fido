@@ -22,6 +22,7 @@ from .core.processing import (
     left_shift, LS,
     circular_shift, CS,
     manipulate_sign, SIGN,
+    modulus, MC,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "left_shift", "LS",
     "circular_shift", "CS",
     "manipulate_sign", "SIGN",
+    "modulus", "MC",
 ]
