@@ -13,14 +13,6 @@ from typing import TypeVar, cast
 NMRArrayType = TypeVar("NMRArrayType", bound=np.ndarray)
 
 
-def _resolve_aliases(targets: dict, source:dict) -> None:
-    for key, aliases in targets.items():
-        for alias in aliases:
-            if alias in source and source[alias] is not None:
-                source[key] = source[alias]
-                break
-
-
 def _format_elapsed_time(elapsed: float) -> str:
     """Format elapsed time to a human readable string for the NMRData processing history.
 
@@ -106,9 +98,9 @@ def _lowpass_filter_safe(fid: NMRArrayType, filt: np.ndarray) -> NMRArrayType:
 def solvent_filter(
     data: NMRArrayType,
     *,
-    filter_mode: str = "Low Pass",
+    filter_mode: int | str = "Low Pass",
     lowpass_size: int = 16,
-    lowpass_shape: str = "Boxcar",
+    lowpass_shape: int | str = "Boxcar",
     butter_ord: int = 4,
     butter_cutoff: float = 0.05,
     poly_ext_order: int = 2,
@@ -144,20 +136,16 @@ def solvent_filter(
     """
     start_time = perf_counter()
     
-    _resolve_aliases(
-        {
-            "filter_mode": ["mode"],
-            "lowpass_size": ["fl"],
-            "lowpass_shape": ["fs"],
-            "poly_ext_order": ["po"],
-            "spline_noise": ["sn"],
-            "smooth_factor": ["sf"],
-            "skip_points": ["head"],
-            "use_poly_ext": ["poly"],
-            "use_mirror_ext": ["mir"],
-        },
-        locals()
-    )
+    filter_mode = mode if mode is not None else filter_mode
+    lowpass_size = fl if fl is not None else lowpass_size
+    lowpass_shape = fs if fs is not None else lowpass_shape
+    poly_ext_order = po if po is not None else poly_ext_order
+    spline_noise = sn if sn is not None else spline_noise
+    smooth_factor = sf if sf is not None else smooth_factor
+    skip_points = head if head is not None else skip_points
+    use_poly_ext = poly if poly is not None else use_poly_ext
+    use_mirror_ext = mir if mir is not None else use_mirror_ext
+
     
     if isinstance(filter_mode, int):
         filter_mode = {1: "Low Pass", 2: "Spline", 3: "Polynomial"}[filter_mode]
@@ -412,17 +400,13 @@ def linear_prediction(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "prediction_size": ["pred"],
-            "pred_start": ["x1"],
-            "pred_end": ["xn"],
-            "order": ["ord"],
-            "mirror_image": ["ps90_180"],
-            "shifted_mirror_image": ["ps0_0"],
-        },
-        locals()
-    )
+    prediction_size = pred if pred is not None else prediction_size
+    pred_start = x1 if x1 is not None else pred_start
+    pred_end = xn if xn is not None else pred_end
+    order = ord if ord is not None else order
+    mirror_image = ps90_180 if ps90_180 is not None else mirror_image
+    shifted_mirror_image = ps0_0 if ps0_0 is not None else shifted_mirror_image
+
     
     if f: model_direction = "forward"
     if b: model_direction = "backward"
@@ -647,18 +631,14 @@ def sine_bell_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "start_angle": ["off"],
-            "end_angle": ["end"],
-            "exponent": ["pow"],
-            "size_window": ["size"],
-            "scale_factor_first_point": ["c"],
-            "fill_outside_one": ["one"],
-            "invert_window": ["inv"],
-        },
-        locals()
-    )
+    start_angle = off if off is not None else start_angle
+    end_angle = end if end is not None else end_angle
+    exponent = pow if pow is not None else exponent
+    size_window = size if size is not None else size_window
+    scale_factor_first_point = c if c is not None else scale_factor_first_point
+    fill_outside_one = one if one is not None else fill_outside_one
+    invert_window = inv if inv is not None else invert_window
+
     
     if size_window is None:
         size_window = int(data.shape[-1])
@@ -757,18 +737,14 @@ def lorentz_to_gauss_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "inv_exp_width": ["g1"],
-            "broaden_width": ["g2"],
-            "center": ["g3"],
-            "size_window": ["size"],
-            "scale_factor_first_point": ["c"],
-            "fill_outside_one": ["one"],
-            "invert_window": ["inv"],
-        },
-        locals()
-    )
+    inv_exp_width = g1 if g1 is not None else inv_exp_width
+    broaden_width = g2 if g2 is not None else broaden_width
+    center = g3 if g3 is not None else center
+    size_window = size if size is not None else size_window
+    scale_factor_first_point = c if c is not None else scale_factor_first_point
+    fill_outside_one = one if one is not None else fill_outside_one
+    invert_window = inv if inv is not None else invert_window
+
     
     if size_window is None:
         size_window = int(data.shape[-1])
@@ -868,16 +844,12 @@ def exp_mult_window(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "line_broadening": ["lb"],
-            "size_window": ["size"],
-            "scale_factor_first_point": ["c"],
-            "fill_outside_one": ["one"],
-            "invert_window": ["inv"],
-        },
-        locals()
-    )
+    line_broadening = lb if lb is not None else line_broadening
+    size_window = size if size is not None else size_window
+    scale_factor_first_point = c if c is not None else scale_factor_first_point
+    fill_outside_one = one if one is not None else fill_outside_one
+    invert_window = inv if inv is not None else invert_window
+
 
 
     
@@ -961,14 +933,10 @@ def zero_fill(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "factor": ["zf"],
-            "add": ["pad"],
-            "final_size": ["size"],
-        },
-        locals()
-    )
+    factor = zf if zf is not None else factor
+    add = pad if pad is not None else add
+    final_size = size if size is not None else final_size
+
     
     original_shape = list(data.shape)
     last_dim = original_shape[-1]
@@ -1080,15 +1048,11 @@ def fourier_transform(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "real_only": ["real"],
-            "inverse": ["inv"],
-            "negate_imaginaries": ["neg"],
-            "sign_alteration": ["alt"],
-        },
-        locals()
-    )
+    real_only = real if real is not None else real_only
+    inverse = inv if inv is not None else inverse
+    negate_imaginaries = neg if neg is not None else negate_imaginaries
+    sign_alteration = alt if alt is not None else sign_alteration
+
 
 
     
@@ -1321,14 +1285,12 @@ def phase(
     start_time = perf_counter()
     
     # Handle argument aliases
-    _resolve_aliases(
-        {
-            "mirror_image": ["ps90_180"],
-            "temporary_zero_fill": ["zf"],
-            "size_time_domain": ["td"],
-        },
-        locals()
-    )
+    invert = inv if inv is not None else invert
+    reconstruct_imaginaries = ht if ht is not None else reconstruct_imaginaries
+    temporary_zero_fill = zf if zf is not None else temporary_zero_fill
+    exponential_correction = exp if exp is not None else exponential_correction
+    decay_constant = tc if tc is not None else decay_constant
+
     
     
     array = data.copy()
@@ -1446,21 +1408,16 @@ def extract_region(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "left_half": ["left"],
-            "right_half": ["right"],
-            "middle_half": ["mid"],
-            "power_of_two": ["pow2"],
-            "adjust_spectral_width": ["sw"],
-            "multiple_of": ["round"],
-            "start": ["x1"],
-            "end": ["xn"],
-            "start_y": ["y1"],
-            "end_y": ["yn"],
-        },
-        locals()
-    )
+    start = x1 if x1 is not None else start
+    end = xn if xn is not None else end
+    start_y = y1 if y1 is not None else start_y
+    end_y = yn if yn is not None else end_y
+    left_half = left if left is not None else left_half
+    right_half = right if right is not None else right_half
+    middle_half = mid if mid is not None else middle_half
+    power_of_two = pow2 if pow2 is not None else power_of_two
+    adjust_spectral_width = sw if sw is not None else adjust_spectral_width
+    multiple_of = round if round is not None else multiple_of
     
     result = data.copy()
     npoints = result.shape[-1]
@@ -1816,15 +1773,11 @@ def polynomial_baseline_correction(
     
     if domain == "time":
         # Handle aliases
-        _resolve_aliases(
-            {
-                "noise_window_size": ["window"],
-                "min_baseline_fraction": ["frac"],
-                "noise_adjustment_factor": ["nf"],
-                "rms_noise_value": ["noise"],
-            },
-            locals()
-        )
+        noise_window_size = window if window is not None else noise_window_size
+        min_baseline_fraction = frac if frac is not None else min_baseline_fraction
+        noise_adjustment_factor = nf if nf is not None else noise_adjustment_factor
+        rms_noise_value = noise if noise is not None else rms_noise_value
+
         
         return _pbc_time(
             data,
@@ -1837,25 +1790,21 @@ def polynomial_baseline_correction(
     
     elif domain == "frequency":
         # Handle aliases
-        _resolve_aliases(
-            {
-                "sub_start": ["sx1"],
-                "sub_end": ["sxn"],
-                "fit_start": ["fx1"],
-                "fit_end": ["fxn"],
-                "start": ["x1"],
-                "end": ["xn"],
-                "node_list": ["nl"],
-                "node_width": ["nw"],
-                "order": ["ord"],
-                "initial_fit_nodes": ["nc"],
-                "use_first_points": ["first"],
-                "use_last_points": ["last"],
-                "use_node_avg": ["avg"],
-                "sine_filter": ["filt"],
-            },
-            locals()
-        )
+        sub_start = sx1 if sx1 is not None else sub_start
+        sub_end = sxn if sxn is not None else sub_end
+        fit_start = fx1 if fx1 is not None else fit_start
+        fit_end = fxn if fxn is not None else fit_end
+        start = x1 if x1 is not None else start
+        end = xn if xn is not None else end
+        node_list = nl if nl is not None else node_list
+        node_width = nw if nw is not None else node_width
+        order = ord if ord is not None else order
+        initial_fit_nodes = nc if nc is not None else initial_fit_nodes
+        use_first_points = first if first is not None else use_first_points
+        use_last_points = last if last is not None else use_last_points
+        use_node_avg = avg if avg is not None else use_node_avg
+        sine_filter = filt if filt is not None else sine_filter
+
 
 
         
@@ -1921,12 +1870,8 @@ def transpose(
     """
     start_time = perf_counter()
     
-    _resolve_aliases(
-        {
-            "hyper_complex": ["hyper"],
-        },
-        locals()
-    )
+    hyper_complex = hyper if hyper is not None else hyper_complex
+
     
     if hyper_complex:
         raise NotImplementedError("Hyper complex transpose is not yet implemented.")
@@ -2014,16 +1959,12 @@ def add_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "constant_real": ["r"],
-            "constant_imaginary": ["i"],
-            "constant": ["c"],
-            "start": ["x1"],
-            "end": ["xn"],
-        },
-        locals()
-    )
+    constant_real = r if r is not None else constant_real
+    constant_imaginary = i if i is not None else constant_imaginary
+    constant = c if c is not None else constant
+    start = x1 if x1 is not None else start
+    end = xn if xn is not None else end
+
     
     
     if (
@@ -2139,16 +2080,12 @@ def multiply_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "constant_real": ["r"],
-            "constant_imaginary": ["i"],
-            "constant": ["c"],
-            "start": ["x1"],
-            "end": ["xn"],
-        },
-        locals()
-    )
+    constant_real = r if r is not None else constant_real
+    constant_imaginary = i if i is not None else constant_imaginary
+    constant = c if c is not None else constant
+    start = x1 if x1 is not None else start
+    end = xn if xn is not None else end
+
 
 
     
@@ -2263,16 +2200,12 @@ def set_to_constant(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "constant_real": ["r"],
-            "constant_imaginary": ["i"],
-            "constant": ["c"],
-            "start": ["x1"],
-            "end": ["xn"],
-        },
-        locals()
-    )
+    constant_real = r if r is not None else constant_real
+    constant_imaginary = i if i is not None else constant_imaginary
+    constant = c if c is not None else constant
+    start = x1 if x1 is not None else start
+    end = xn if xn is not None else end
+
 
 
     if (
@@ -2437,12 +2370,8 @@ def reverse(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "adjust_spectral_width": ["sw"],
-        },
-        locals()
-    )
+    adjust_spectral_width = sw if sw is not None else adjust_spectral_width
+
     
     
     if adjust_spectral_width:
@@ -2501,13 +2430,9 @@ def right_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "shift_amount": ["rs"],
-            "adjust_spectral_width": ["sw"],
-        },
-        locals()
-    )
+    shift_amount = rs if rs is not None else shift_amount
+    adjust_spectral_width = sw if sw is not None else adjust_spectral_width
+
     
     dim = -1 
     npoints = data.shape[dim]
@@ -2594,13 +2519,9 @@ def left_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "shift_amount": ["ls"],
-            "adjust_spectral_width": ["sw"],
-        },
-        locals()
-    )
+    shift_amount = ls if ls is not None else shift_amount
+    adjust_spectral_width = sw if sw is not None else adjust_spectral_width
+
     
     shift_points = _convert_to_index(data, shift_amount, data.shape[-1], default=0)
     
@@ -2663,15 +2584,11 @@ def circular_shift(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "right_shift_amount": ["rs"],
-            "left_shift_amount": ["ls"],
-            "negate_shifted": ["neg"],
-            "adjust_spectral_width": ["sw"],
-        },
-        locals()
-    )
+    right_shift_amount = rs if rs is not None else right_shift_amount
+    left_shift_amount = ls if ls is not None else left_shift_amount
+    negate_shifted = neg if neg is not None else negate_shifted
+    adjust_spectral_width = sw if sw is not None else adjust_spectral_width
+
     
     if right_shift_amount != 0 and left_shift_amount != 0:
         raise ValueError("Specify only one of right_shift_amount (rs) or left_shift_amount (ls), not both.")
@@ -2785,19 +2702,15 @@ def manipulate_sign(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "negate_all": ["ri"],
-            "negate_reals": ["r"],
-            "negate_imaginaries": ["i"],
-            "negate_left_half": ["left"],
-            "negate_right_half": ["right"],
-            "alternate_sign": ["alt"],
-            "absolute_value": ["abs"],
-            "replace_with_sign": ["sign"],
-        },
-        locals()
-    )
+    negate_all = ri if ri is not None else negate_all
+    negate_reals = r if r is not None else negate_reals
+    negate_imaginaries = i if i is not None else negate_imaginaries
+    negate_left_half = left if left is not None else negate_left_half
+    negate_right_half = right if right is not None else negate_right_half
+    alternate_sign = alt if alt is not None else alternate_sign
+    absolute_value = abs if abs is not None else absolute_value
+    replace_with_sign = sign if sign is not None else replace_with_sign
+
 
 
     
@@ -2884,13 +2797,9 @@ def modulus(
     start_time = perf_counter()
     
     # Handle aliases
-    _resolve_aliases(
-        {
-            "modulus": ["mod"],
-            "modulus_squared": ["pow"],
-        },
-        locals()
-    )
+    modulus = mod if mod is not None else modulus
+    modulus_squared = pow if pow is not None else modulus_squared
+
     
     if modulus_squared:
         result_array = np.real(data) ** 2 + np.imag(data) ** 2
