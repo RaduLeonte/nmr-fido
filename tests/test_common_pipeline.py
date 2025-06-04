@@ -6,26 +6,7 @@ import matplotlib.pyplot as plt
 import time
 
 
-dic, data = ng.pipe.read("tests/test2d.fid")
-
-data = nf.NMRData(
-    data,
-    axes= [
-        {
-            "label": "15N",
-            "SW": 5555.55615234375,
-            "ORI": 3333.448974609375,
-            "OBS": 50.64799880981445,
-            "interleaved_data": True,
-        },
-        {
-            "label": "13C",
-            'SW': 50000.0,
-            'ORI': -18053.66015625,
-            'OBS': 125.69100189208984,
-        },
-    ]
-)
+data = nf.read_nmrpipe("tests/test2d.fid")
 
 
 start_time = time.perf_counter()
@@ -54,20 +35,18 @@ print(f"\n--- Done! Elapsed: {time.perf_counter() - start_time:.3f} s", "\n")
 
 fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")
 
-limits_x = (data.axes[-1]["scale"][0], data.axes[-1]["scale"][-1])
-limits_y = (data.axes[-2]["scale"][0], data.axes[-2]["scale"][-1])
 ax.contour(
     data,
-    levels = 30_000 * 1.1 ** np.arange(16),
-    extent = (*limits_x, *limits_y),
+    levels = 20_000 * 1.2 ** np.arange(16),
+    extent = data.extent(),
     colors = "crimson",
 )
 
 plt.gca().invert_xaxis()
 plt.gca().invert_yaxis()
 ax.set_title("NMR Fido")
-ax.set_xlabel(data.axes[-1]["label"])
-ax.set_ylabel(data.axes[-2]["label"])
+ax.set_xlabel(f'{data.axes[-1]["label"]} [{data.axes[-1]["unit"]}]')
+ax.set_ylabel(f'{data.axes[-2]["label"]}\n[{data.axes[-1]["unit"]}]', rotation=0, ha="right")
 #ax.set_xlim(70, 40)
 #ax.set_ylim(135, 100)
 plt.show()
