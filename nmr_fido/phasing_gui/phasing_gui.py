@@ -2,6 +2,9 @@ import numpy as np
 from copy import deepcopy
 import nmrglue as ng
 from skimage import measure
+import contourpy
+from typing import Tuple
+from time import perf_counter
 
 from PySide6.QtCore import *
 from PySide6.QtWidgets import *
@@ -47,9 +50,19 @@ class MainWindow(QMainWindow):
         self.app = app
         self.data = data
         
+        self.base_level = None
+        self.nr_levels = 16
+        self.level_multiplier = 1.2
+        self._calculate_levels()
+        
+        self.positive_color = "m"
+        self.negative_color = "c"
+        
         self._init_ui()
         
         pass
+    
+
     
     
     #region UI
@@ -95,7 +108,7 @@ class MainWindow(QMainWindow):
         central_widget.addWidget(phasing_traces_group) # Add
         return
     
-    
+    #region Main spectrum toolbar
     def _create_main_spectrum_toolbar(self) -> QWidget:
         axis_labels = [ax["label"] for ax in self.data.axes]
         
@@ -103,7 +116,7 @@ class MainWindow(QMainWindow):
         main_spectrum_toolbar.setLayout(QHBoxLayout())
         main_spectrum_toolbar.layout().setAlignment(Qt.AlignLeft)
         
-        # X group
+        # Dimension select groups
         for axis in ["X", "Y"]:
             dim_controls = QWidget()
             dim_controls.setLayout(QHBoxLayout())
@@ -113,12 +126,77 @@ class MainWindow(QMainWindow):
             dim_controls.layout().addWidget(QLabel(f"{axis}:"))
             
             for label in axis_labels:
-                main_spectrum_toolbar.layout().addWidget(ToolbarButton(label)) # Add
+                dim_controls.layout().addWidget(ToolbarButton(label)) # Add
+        
+        
+        # Levels controls
+        levels_controls = QWidget()
+        levels_controls.setLayout(QHBoxLayout())
+        main_spectrum_toolbar.layout().addWidget(levels_controls)
+        
+        levels_controls.layout().addWidget(QLabel("Contours:"))
+        
+        increase_base_level_button = ToolbarButton("+")
+        levels_controls.layout().addWidget(increase_base_level_button)
+        increase_base_level_button.setToolTip("Increase the contours base level")
+        increase_base_level_button.pressed.connect(self._increase_base_level_button_callback)
+        
+        decrease_base_level_button = ToolbarButton("-")
+        levels_controls.layout().addWidget(decrease_base_level_button)
+        decrease_base_level_button.setToolTip("Decrease the contours base level")
+        decrease_base_level_button.pressed.connect(self._decrease_base_level_button_callback)
+        
+        level_multiplier_input = QDoubleSpinBox()
+        levels_controls.layout().addWidget(level_multiplier_input)
+        level_multiplier_input.setToolTip("Levels multiplier")
+        level_multiplier_input.setMinimum(1.0)
+        level_multiplier_input.setMaximum(10.0)
+        level_multiplier_input.setSingleStep(0.1)
+        level_multiplier_input.setDecimals(2)
+        level_multiplier_input.setValue(self.level_multiplier)
+        level_multiplier_input.valueChanged.connect(self._level_multiplier_input_callback)
+        
+        nr_levels_input = QSpinBox()
+        levels_controls.layout().addWidget(nr_levels_input)
+        nr_levels_input.setToolTip("Number of contours to draw")
+        nr_levels_input.setMinimum(0)
+        nr_levels_input.setMaximum(100)
+        nr_levels_input.setValue(self.nr_levels)
+        nr_levels_input.valueChanged.connect(self._nr_levels_input_callback)
+        
         
         return main_spectrum_toolbar
     
     
+    def _increase_base_level_button_callback(self) -> None:
+        if self.base_level is None: self._calculate_levels()
+        
+        self.base_level *= self.level_multiplier
+        self._draw_plot()
+        return
     
+    def _decrease_base_level_button_callback(self) -> None:
+        if self.base_level is None: self._calculate_levels()
+        
+        self.base_level /= self.level_multiplier
+        self._draw_plot()
+        return
+    
+    
+    def _level_multiplier_input_callback(self, value) -> None:
+        self.level_multiplier = value
+        self._draw_plot()
+        return
+    
+    
+    def _nr_levels_input_callback(self, value) -> None:
+        self.nr_levels = value
+        self._draw_plot()
+        return
+    
+    #endregion
+    
+    #region Main spectrum
     def _create_main_spectrum_plot(self) -> QWidget:
         main_spectrum_plot = pg.PlotWidget()
         plot_layout = pg.GraphicsLayout()
@@ -129,90 +207,109 @@ class MainWindow(QMainWindow):
         main_spectrum_plot.getAxis("bottom").setTextPen("w")
         main_spectrum_plot.getAxis("left").setTextPen("w")
         
-        plot_ax = pg.PlotItem()
+        # Plot
+        self.plot_ax = pg.PlotItem()
+        plot_layout.addItem(self.plot_ax)
         
+        # Remove ticks on the left and top axis
         for axis_code in ["left", "top"]:
-            plot_ax.showAxis(axis_code)
-            axis = plot_ax.getAxis(axis_code)
+            self.plot_ax.showAxis(axis_code)
+            axis = self.plot_ax.getAxis(axis_code)
             axis.setTicks([])
             axis.setLabel("")
             axis.setStyle(showValues=False)
 
-        
+        # Set labels
         axis_labels = [ax["label"] for ax in self.data.axes]
         
-        plot_ax.getAxis("bottom").setLabel(f"{axis_labels[0]} [ppm]")
-        plot_ax.getAxis("bottom").setTextPen(COLOR_PALETTE["--text-color"])
+        self.plot_ax.getAxis("bottom").setLabel(f"{axis_labels[0]} [ppm]")
+        self.plot_ax.getAxis("bottom").setTextPen(COLOR_PALETTE["--text-color"])
         
-        plot_ax.showAxis("right")
-        plot_ax.getAxis("right").setLabel(f"{axis_labels[1]}\n[ppm]")
-        plot_ax.getAxis("right").label.setRotation(0)
-        plot_ax.getAxis("right").label.setTextWidth(60)
-        plot_ax.getAxis("right").setTextPen(COLOR_PALETTE["--text-color"])
+        self.plot_ax.showAxis("right")
+        self.plot_ax.getAxis("right").setLabel(f"{axis_labels[1]}\n[ppm]")
+        self.plot_ax.getAxis("right").label.setRotation(0)
+        self.plot_ax.getAxis("right").label.setTextWidth(60)
+        self.plot_ax.getAxis("right").setTextPen(COLOR_PALETTE["--text-color"])
         
-        plot_ax.getViewBox().setBackgroundColor(COLOR_PALETTE["--bg-color1"])
+        # Styling
+        self.plot_ax.getViewBox().setBackgroundColor(COLOR_PALETTE["--bg-color1"])
         
-        plot_layout.addItem(plot_ax)
-        
-        
-        data = self.data.real
-        
-        base_level = None
-        if base_level is None:
-            base_level = self._median_absolute_deviation(data, k=6)
-        level_multiplier = 1.2
-        nr_levels = 12
-        
-        levels_positive = [base_level * (level_multiplier ** j) for j in range(nr_levels)]
-        levels_negative = [-l for l in levels_positive]
-        
-        pos_color = "m"
-        neg_color = "c"
-        
-        print(self.data.summary())
-        print(data)
+        # Scales
         x_scale = self.data.axes[0]["scale"]
         y_scale = self.data.axes[1]["scale"]
+        self.plot_ax.setXRange(x_scale[-1], x_scale[0], padding=0)
+        self.plot_ax.setYRange(y_scale[-1], y_scale[0], padding=0)
+        # Invert scales if necessary
+        if x_scale[0] > x_scale[-1]: self.plot_ax.getViewBox().invertX(True)
+        if y_scale[0] > y_scale[-1]: self.plot_ax.getViewBox().invertY(True)
         
-        x_pixel_to_scale = lambda xi: np.interp(xi, [0, x_scale.size-1], [x_scale[0], x_scale[-1]])
-        y_pixel_to_scale = lambda yi: np.interp(yi, [0, y_scale.size-1], [y_scale[0], y_scale[-1]])
-        invert_x = x_scale[0] > x_scale[-1]
-        invert_y = y_scale[0] > y_scale[-1]
         
-        def _draw_contours(levels, pen_color):
-            path = QPainterPath()
-            for level in levels:
-                contours = measure.find_contours(data, level=level)
-                for contour in contours:
-                    if contour.shape[0] < 2:
-                        continue
-                    x0 = x_pixel_to_scale(contour[0, 1])
-                    y0 = y_pixel_to_scale(contour[0, 0])
-                    path.moveTo(x0, y0)
-                    for pt in contour[1:]:
-                        x = x_pixel_to_scale(pt[1])
-                        y = y_pixel_to_scale(pt[0])
-                        path.lineTo(x, y)
-            item = QGraphicsPathItem(path)
-            item.setPen(pg.mkPen(color=pen_color, width=1))
-            plot_ax.addItem(item)
+        # Bounding rectangle
+        x_min, x_max = min(x_scale), max(x_scale)
+        y_min, y_max = min(y_scale), max(y_scale)
+        self.bounding_rect = pg.QtWidgets.QGraphicsRectItem(
+            QRectF(x_min, y_min, x_max - x_min, y_max - y_min)
+        )
+        self.bounding_rect.setPen(pg.mkPen(self.positive_color, width=0.5))
+        self.bounding_rect.setBrush(QBrush(Qt.NoBrush))
         
-        _draw_contours(levels_positive, pos_color)
+        self.contour_generator = contourpy.contour_generator(z=self.data.real, name='serial')
+        self._markers = []
+        
+        self._draw_plot()
+        
+        self._add_marker((9.5, 134))
 
-        # Draw negative levels with inverted color
-        _draw_contours(levels_negative, neg_color)
-        
-        
-        plot_ax.setXRange(x_scale[-1], x_scale[0], padding=0)
-        plot_ax.setYRange(y_scale[-1], y_scale[0], padding=0)
-        
-        if invert_x: plot_ax.getViewBox().invertX(True)
-        if invert_y: plot_ax.getViewBox().invertY(True)
         
         return main_spectrum_plot
     
     
-    def _median_absolute_deviation(self, data, k=1.4826):
+    def _add_marker(self, pos):
+        marker_box_width = 0.2
+        marker_size = (marker_box_width, marker_box_width*5)
+        marker_line_width = 1
+        marker_color = "r"
+        
+        center_x = pos[0] - marker_size[0] / 2
+        center_y = pos[1] - marker_size[1] / 2
+        
+        marker = pg.ROI(pos=(center_x, center_y), size=marker_size, movable=True)
+        marker.setPen(pg.mkPen(marker_color, width=marker_line_width))
+        marker.setZValue(10)
+        self.plot_ax.addItem(marker)
+
+        # Infinite lines (crosshairs)
+        vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(marker_color, width=marker_line_width))
+        hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(marker_color, width=marker_line_width))
+        self.plot_ax.addItem(vline)
+        self.plot_ax.addItem(hline)
+
+        # Centered line positions
+        vline.setPos(pos[0])
+        hline.setPos(pos[1])
+
+        # Callback to update line positions when marker is moved
+        def update_lines():
+            p = marker.pos()
+            s = marker.size()
+            cx = p.x() + s[0] / 2
+            cy = p.y() + s[1] / 2
+            vline.setPos(cx)
+            hline.setPos(cy)
+
+        marker.sigRegionChanged.connect(update_lines)
+        
+        markers = [v[0] for v in self._markers]
+        print(marker, markers)
+        if marker not in markers:
+            self._markers.append(
+                [marker, vline, hline]
+            )
+    
+
+    
+    
+    def _median_absolute_deviation(self, data, k=1.4826) -> np.ndarray:
         """ Median Absolute Deviation: a "Robust" version of standard deviation.
             Indices variabililty of the sample.
             https://en.wikipedia.org/wiki/Median_absolute_deviation
@@ -220,6 +317,81 @@ class MainWindow(QMainWindow):
         data = np.ma.array(data).compressed()
         median = np.median(data)
         return k*np.median(np.abs(data - median))
+    
+    
+    def _calculate_levels(self) -> Tuple[np.ndarray, np.ndarray]:
+        if self.base_level is not None:
+            levels_positive = np.array([self.base_level * (self.level_multiplier ** j) for j in range(self.nr_levels)])
+        else:
+            rows, cols = data.shape
+            row_start, row_end = rows // 4, rows * 3 // 4
+            col_start, col_end = cols // 4, cols * 3 // 4
+            central_region = data.real[row_start:row_end, col_start:col_end]
+            
+            maximum = float(np.max(central_region))
+            
+            #base_level = self._median_absolute_deviation(central_region, k=3)
+
+            levels_positive = np.array([maximum / (self.level_multiplier ** j) for j in range(self.nr_levels)])
+            
+            self.base_level = np.min(levels_positive)
+        
+        levels_negative = levels_positive*-1
+        
+        return levels_positive, levels_negative
+    
+    
+    def _draw_plot(self) -> None:
+        start_time = perf_counter()
+        print("Drawing plot...")
+        
+        # Clear plot
+        self.plot_ax.clear()
+        
+        # Get real data
+        data = self.data.real
+        
+        # Levels
+        levels_positive, levels_negative = self._calculate_levels()
+        
+        # Scales
+        x_scale = self.data.axes[0]["scale"]
+        y_scale = self.data.axes[1]["scale"]
+        
+        # Draw bounding rect
+        self.plot_ax.addItem(self.bounding_rect)
+        
+        # Contours
+        def _draw_contours(levels, pen_color):
+            path = QPainterPath()
+            for level in levels:
+                lines = self.contour_generator.lines(level)
+                
+                for line in lines:
+                    if line.shape[0] < 2: continue
+                    
+                    x = np.interp(line[:, 0], [0, data.shape[1] - 1], [x_scale[0], x_scale[-1]])
+                    y = np.interp(line[:, 1], [0, data.shape[0] - 1], [y_scale[0], y_scale[-1]])
+                    
+                    path.moveTo(x[0], y[0])
+                    for xi, yi in zip(x[1:], y[1:]): path.lineTo(xi, yi)
+            
+            item = QGraphicsPathItem(path)
+            item.setPen(pg.mkPen(color=pen_color, width=1))
+            self.plot_ax.addItem(item)
+        
+        _draw_contours(levels_positive, self.positive_color)
+        _draw_contours(levels_negative, self.negative_color)
+        
+        for marker, _, _ in self._markers:
+            p = marker.pos()
+            s = marker.size()
+            cx = p.x() + s[0] / 2
+            cy = p.y() + s[1] / 2
+            self._add_marker((cx, cy))
+        
+        print(f"Done drawing plot... {perf_counter() - start_time:.3f} s")
+        return
     
     
     #endregion UI
