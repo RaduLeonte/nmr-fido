@@ -31,7 +31,10 @@ data = nf.TP(data) # 0.261 ms
 
 for entry in data.processing_history: print(f'{entry["Function"]} -> {entry["time_elapsed_s"]*1000:.3f} ms')
 print(f"\n--- Done! Elapsed: {time.perf_counter() - start_time:.3f} s", "\n")
-    
+
+print(data.summary())
+nf.phasing_gui(data)
+
 
 fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")
 

@@ -160,10 +160,6 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.statusBar)
         
         self._init_ui()
-        
-        
-        self._add_marker((9.47, 133.67))
-        
         pass
     
 
@@ -398,10 +394,10 @@ class MainWindow(QMainWindow):
         if self.base_level is not None:
             levels_positive = np.array([self.base_level * (self.level_multiplier ** j) for j in range(self.nr_levels)])
         else:
-            rows, cols = data.shape
+            rows, cols = self.data.shape
             row_start, row_end = rows // 4, rows * 3 // 4
             col_start, col_end = cols // 4, cols * 3 // 4
-            central_region = data.real[row_start:row_end, col_start:col_end]
+            central_region = self.data.real[row_start:row_end, col_start:col_end]
             
             maximum = float(np.max(central_region))
             
@@ -466,7 +462,6 @@ class MainWindow(QMainWindow):
     
     
     def _add_marker(self, pos):
-        print(f"MainWindow._add_marker -> ", pos)
         marker = Marker(self, pos, self._create_trace())
         self._markers.append(marker)
         self._draw_marker(marker)

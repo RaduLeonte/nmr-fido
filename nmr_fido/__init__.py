@@ -8,6 +8,11 @@ from .io.fileio import (
 )
 __all__ += ["read_nmrpipe"]
 
+from .phasing_gui.phasing_gui import (
+    phasing_gui
+)
+__all__ += ["phasing_gui"]
+
 from .core.processing import (
     solvent_filter, SOL,
     linear_prediction, LP,
