@@ -24,9 +24,104 @@ COLOR_PALETTE = {
     "--bg-color3": "#252525",
     "--border-color": "#505050",
 }
+        
+        
+class CustomPlotItem(pg.PlotItem):
+    def __init__(self, parent_plot_widget, main_window):
+        self.parent_plot_widget = parent_plot_widget
+        self.main_window = main_window
+        super().__init__()
+        self.setMenuEnabled(False)
+        
+        
+    def contextMenuEvent(self, event):
+        menu = QMenu(self.parent_plot_widget)
+        
+        pos = event.pos()
+        
+        offset = [10, 10]
+        pos = [pos.x() + offset[0], pos.y() + offset[1]]
+        
+        position_in_plot = self.vb.mapSceneToView(QPointF(*pos))
+        print("---", (position_in_plot.x(), position_in_plot.y()))
+        
+        # Create custom actions
+        action1 = QAction("Add marker", self)
+        action1.triggered.connect(lambda: self.main_window._add_marker((position_in_plot.x(), position_in_plot.y())))
+        menu.addAction(action1)
+
+        # Show the menu at the mouse position
+        global_pos = self.parent_plot_widget.mapToGlobal(QPoint(*pos))
+        menu.exec(global_pos)
+
+class Marker():
+    def __init__(
+        self,
+        parent: 'MainWindow',
+        pos: tuple,
+        trace: pg.PlotWidget,
+        width: float = 0.2,
+        height:float = 1.0,
+        color: str = "r",
+    ) -> None:
+        self.parent = parent
+        
+        self.pos = pos
+        
+        self.trace = trace
+        
+        self.width = width
+        self.height = height
+        self.size = (width, height)
+        
+        self.line_width = 1
+        
+        self.color = color
+        
+        self.x = pos[0]
+        self.y = pos[1]
+        
+        rect_x = pos[0] - self.size[0] / 2
+        rect_y = pos[1] - self.size[1] / 2
+        
+        self.rect = pg.ROI(pos=(rect_x, rect_y), size=self.size, movable=True)
+        self.rect.setPen(pg.mkPen(self.color, width=self.line_width))
+        self.rect.setZValue(10)
+
+        # Infinite lines (crosshairs)
+        self.vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(self.color, width=self.line_width))
+        self.hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(self.color, width=self.line_width))
+
+        self.vline.setPos(pos[0])
+        self.hline.setPos(pos[1])
+        
+        self.rect.sigRegionChanged.connect(self._update_lines)
+        
+        self._update_trace()
+        pass
+    
+    def _update_lines(self) -> None:
+        rect_pos = self.rect.pos()
+        rect_size = self.rect.size()
+        self.x = rect_pos.x() + rect_size[0] / 2
+        self.y = rect_pos.y() + rect_size[1] / 2
+        
+        self.pos = (self.x, self.y)
+        
+        self.vline.setPos(self.x)
+        self.hline.setPos(self.y)
+        
+        
+        self._update_trace()
+        
+        return
+    
+    def _update_trace(self) -> None:
+        self.parent._update_trace(self.trace, self.pos)
+        return
 
 
-def phase_gui(data: NMRData):
+def phasing_gui(data: NMRData):
     app: QApplication = QApplication()
 
     main_window: MainWindow = MainWindow(app, data)
@@ -58,7 +153,16 @@ class MainWindow(QMainWindow):
         self.positive_color = "m"
         self.negative_color = "c"
         
+        self.traces = []
+        self.trace_mode = "rows"
+        
+        self.statusBar = QStatusBar()
+        self.setStatusBar(self.statusBar)
+        
         self._init_ui()
+        
+        
+        self._add_marker((9.47, 133.67))
         
         pass
     
@@ -71,6 +175,7 @@ class MainWindow(QMainWindow):
         
         self.setWindowTitle("NMR Fido - Phasing GUI")
         #self.setWindowIcon(QIcon("icon.png"))
+        
         
         # Minimum size
         min_size = (820, 400)
@@ -101,11 +206,17 @@ class MainWindow(QMainWindow):
         
         main_spectrum_group.layout().addWidget(self._create_main_spectrum_toolbar()) # Add
         
-        main_spectrum_group.layout().addWidget(self._create_main_spectrum_plot()) # Add
+        self.main_spectrum_plot = self._create_main_spectrum_plot()
+        main_spectrum_group.layout().addWidget(self.main_spectrum_plot) # Add        
         
+        traces_group = QWidget()
+        traces_group.setLayout(QVBoxLayout())
+        central_widget.addWidget(traces_group) # Add
         
-        phasing_traces_group = QWidget()
-        central_widget.addWidget(phasing_traces_group) # Add
+        traces_group.layout().addWidget(self._create_traces_toolbar())
+        
+        self.traces_container = self._create_traces_container()
+        traces_group.layout().addWidget(self.traces_container) # Add
         return
     
     #region Main spectrum toolbar
@@ -175,6 +286,7 @@ class MainWindow(QMainWindow):
         self._draw_plot()
         return
     
+    
     def _decrease_base_level_button_callback(self) -> None:
         if self.base_level is None: self._calculate_levels()
         
@@ -208,8 +320,10 @@ class MainWindow(QMainWindow):
         main_spectrum_plot.getAxis("left").setTextPen("w")
         
         # Plot
-        self.plot_ax = pg.PlotItem()
+        self.plot_ax = CustomPlotItem(parent_plot_widget=main_spectrum_plot, main_window=self)
         plot_layout.addItem(self.plot_ax)
+        
+        self.plot_ax.scene().sigMouseMoved.connect(self._on_mouse_move)
         
         # Remove ticks on the left and top axis
         for axis_code in ["left", "top"]:
@@ -257,56 +371,17 @@ class MainWindow(QMainWindow):
         self._markers = []
         
         self._draw_plot()
-        
-        self._add_marker((9.5, 134))
 
         
         return main_spectrum_plot
     
     
-    def _add_marker(self, pos):
-        marker_box_width = 0.2
-        marker_size = (marker_box_width, marker_box_width*5)
-        marker_line_width = 1
-        marker_color = "r"
+    def _on_mouse_move(self, pos):
+        position_in_plot = self.plot_ax.vb.mapSceneToView(pos)
         
-        center_x = pos[0] - marker_size[0] / 2
-        center_y = pos[1] - marker_size[1] / 2
-        
-        marker = pg.ROI(pos=(center_x, center_y), size=marker_size, movable=True)
-        marker.setPen(pg.mkPen(marker_color, width=marker_line_width))
-        marker.setZValue(10)
-        self.plot_ax.addItem(marker)
-
-        # Infinite lines (crosshairs)
-        vline = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(marker_color, width=marker_line_width))
-        hline = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(marker_color, width=marker_line_width))
-        self.plot_ax.addItem(vline)
-        self.plot_ax.addItem(hline)
-
-        # Centered line positions
-        vline.setPos(pos[0])
-        hline.setPos(pos[1])
-
-        # Callback to update line positions when marker is moved
-        def update_lines():
-            p = marker.pos()
-            s = marker.size()
-            cx = p.x() + s[0] / 2
-            cy = p.y() + s[1] / 2
-            vline.setPos(cx)
-            hline.setPos(cy)
-
-        marker.sigRegionChanged.connect(update_lines)
-        
-        markers = [v[0] for v in self._markers]
-        print(marker, markers)
-        if marker not in markers:
-            self._markers.append(
-                [marker, vline, hline]
-            )
-    
-
+        # Update the status bar with the coordinates
+        x, y = position_in_plot.x(), position_in_plot.y()
+        self.statusBar.showMessage(f"X: {x:.2f} ppm, Y: {y:.2f} ppm")
     
     
     def _median_absolute_deviation(self, data, k=1.4826) -> np.ndarray:
@@ -345,7 +420,8 @@ class MainWindow(QMainWindow):
         start_time = perf_counter()
         print("Drawing plot...")
         
-        # Clear plot
+        
+        self._clear_all_markers()
         self.plot_ax.clear()
         
         # Get real data
@@ -383,17 +459,229 @@ class MainWindow(QMainWindow):
         _draw_contours(levels_positive, self.positive_color)
         _draw_contours(levels_negative, self.negative_color)
         
-        for marker, _, _ in self._markers:
-            p = marker.pos()
-            s = marker.size()
-            cx = p.x() + s[0] / 2
-            cy = p.y() + s[1] / 2
-            self._add_marker((cx, cy))
+        self._draw_all_markers()
         
         print(f"Done drawing plot... {perf_counter() - start_time:.3f} s")
         return
     
     
+    def _add_marker(self, pos):
+        print(f"MainWindow._add_marker -> ", pos)
+        marker = Marker(self, pos, self._create_trace())
+        self._markers.append(marker)
+        self._draw_marker(marker)
+            
+            
+    def _draw_all_markers(self) -> None:
+        for marker in self._markers:
+            self._draw_marker(marker) 
+        return
+    
+    
+    def _draw_marker(self, marker) -> None:
+        self.plot_ax.addItem(marker.rect)
+        self.plot_ax.addItem(marker.vline)
+        self.plot_ax.addItem(marker.hline)
+        return
+    
+    
+    def _clear_all_markers(self) -> None:
+        for marker in self._markers:
+            self._clear_marker(marker) 
+        return
+    
+    
+    def _clear_marker(self, marker) -> None:
+        self.plot_ax.removeItem(marker.rect)
+        self.plot_ax.removeItem(marker.vline)
+        self.plot_ax.removeItem(marker.hline)
+        return
+    
+    
+    def _create_traces_toolbar(self):
+        traces_toolbar = QWidget()
+        traces_toolbar.setLayout(QHBoxLayout())
+        traces_toolbar.layout().setAlignment(Qt.AlignLeft)
+        
+        display_rows_button = ToolbarButton("Rows")
+        traces_toolbar.layout().addWidget(display_rows_button)
+        display_rows_button.setToolTip("Display rows")
+        display_rows_button.pressed.connect(self._display_rows_button_callback)
+        
+        display_columns_button = ToolbarButton("Columns")
+        traces_toolbar.layout().addWidget(display_columns_button)
+        display_columns_button.setToolTip("Display columns")
+        display_columns_button.pressed.connect(self._display_columns_button_callback)
+        
+        def create_slider(range):
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(*range)
+            slider.setValue(0)
+            slider.setSingleStep(1)
+            
+            return slider
+        
+        def create_spinbox():
+            spinbox = QDoubleSpinBox()
+            spinbox.setValue(0)
+            spinbox.setRange(-360.0, 360.0)
+            spinbox.setSingleStep(0.1)
+            spinbox.setDecimals(2)
+            
+            return spinbox
+        
+        def add_callbacks(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            slider_coarse.valueChanged.connect(
+                lambda: slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+            )
+            slider_fine.valueChanged.connect(
+                lambda: slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+            )
+            spin_box.valueChanged.connect(
+                lambda: spin_box_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+            )
+        
+        def slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            coarse_value = float(slider_coarse.value() / slider_factor_coarse)
+            fine_value = float(slider_fine.value() / slider_factor_fine)
+            spin_box.blockSignals(True)
+            spin_box.setValue(coarse_value + fine_value)
+            spin_box.blockSignals(False)
+            
+            self._update_all_traces()
+                
+        def spin_box_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            total_value = spin_box.value()
+            coarse_value = int(total_value)
+            fine_value = int((total_value - coarse_value) * slider_factor_fine)
+            
+            slider_coarse.blockSignals(True)
+            slider_coarse.setValue(coarse_value * slider_factor_coarse)
+            slider_coarse.blockSignals(False)
+            
+            slider_fine.blockSignals(True)
+            slider_fine.setValue(fine_value)
+            slider_fine.blockSignals(False)
+            
+            self._update_all_traces()
+        
+        slider_factor_coarse = 10
+        slider_factor_fine = 10
+        
+        
+        traces_toolbar.layout().addWidget(QLabel("P0"))
+        
+        p0_slider_coarse = create_slider((-360 * slider_factor_coarse, 360 * slider_factor_coarse))
+        traces_toolbar.layout().addWidget(p0_slider_coarse)
+        
+        p0_slider_fine = create_slider((-10 * slider_factor_coarse, 10 * slider_factor_coarse))
+        traces_toolbar.layout().addWidget(p0_slider_fine)
+        
+        p0_spin_box = create_spinbox()
+        self.p0_spin_box = p0_spin_box
+        traces_toolbar.layout().addWidget(p0_spin_box)
+            
+        add_callbacks(p0_slider_coarse, p0_slider_fine, p0_spin_box, slider_factor_coarse, slider_factor_fine)
+        
+        
+        traces_toolbar.layout().addWidget(QLabel("P1"))
+        
+        p1_slider_coarse = create_slider((-360 * slider_factor_coarse, 360 * slider_factor_coarse))
+        traces_toolbar.layout().addWidget(p1_slider_coarse)
+        
+        p1_slider_fine = create_slider((-10 * slider_factor_coarse, 10 * slider_factor_coarse))
+        traces_toolbar.layout().addWidget(p1_slider_fine)
+        
+        p1_spin_box = create_spinbox()
+        self.p1_spin_box = p1_spin_box
+        traces_toolbar.layout().addWidget(p1_spin_box)
+            
+        add_callbacks(p1_slider_coarse, p1_slider_fine, p1_spin_box, slider_factor_coarse, slider_factor_fine)
+        
+        return traces_toolbar
+    
+    
+    def _display_rows_button_callback(self) -> None:
+        self.trace_mode = "rows"
+        self._update_all_traces()
+        return
+    
+    def _display_columns_button_callback(self) -> None:
+        self.trace_mode = "columns"
+        self._update_all_traces()
+        return
+    
+    
+    def _create_traces_container(self):
+        traces_container = QWidget()
+        traces_container.setLayout(QVBoxLayout())
+        traces_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        return traces_container
+    
+    
+    def _create_trace(self):
+        trace = pg.PlotWidget()
+        trace.setBackground(QColor(0, 0, 0, 0))
+        trace.getAxis("bottom").setTextPen("w")
+        trace.showAxis("right")
+        trace.getAxis("right").setTextPen("w")
+        for axis_code in ["left", "top"]:
+            trace.showAxis(axis_code)
+            axis = trace.getAxis(axis_code)
+            axis.setTicks([])
+            axis.setLabel("")
+            axis.setStyle(showValues=False)
+        
+        self.traces.append(trace)
+        self.traces_container.layout().addWidget(trace)
+        
+        return trace
+    
+    
+    def _update_all_traces(self) -> None:
+        for marker in self._markers:
+            marker._update_trace()
+    
+    
+    def _update_trace(self, trace, pos):
+        trace.clear()
+        
+        x_scale = self.data.axes[0]["scale"]
+        y_scale = self.data.axes[1]["scale"]
+        
+        axis_labels = [ax["label"] for ax in self.data.axes]
+        
+        data = np.array(self.data)
+        if self.trace_mode == "rows":
+            target_ppm = pos[1]
+            target_scale = y_scale
+            index = min(range(len(target_scale)), key=lambda i: abs(target_scale[i] - target_ppm))
+            
+            scale = x_scale
+            trace_data = data[index]
+            
+            trace.getAxis("bottom").setLabel(f"{axis_labels[0]} [ppm]")
+            
+        else:
+            target_ppm = pos[0]
+            target_scale = x_scale
+            index = min(range(len(target_scale)), key=lambda i: abs(target_scale[i] - target_ppm))
+            
+            scale = y_scale
+            trace_data = np.transpose(data)[index]
+            
+            trace.getAxis("bottom").setLabel(f"{axis_labels[1]} [ppm]")
+        
+        print(self.trace_mode, target_ppm)
+        
+        trace_data = nf.PS(trace_data, p0=self.p0_spin_box.value(), p1=self.p1_spin_box.value(), ht=True).real
+        
+        trace_max = float(np.max(np.abs(trace_data)))
+        if scale[0] > scale[-1]: trace.getViewBox().invertX(True)
+        trace.setYRange(-trace_max, trace_max)
+        trace.plot(scale, trace_data)
+        return
     #endregion UI
     
     
@@ -420,4 +708,4 @@ if __name__ == "__main__":
     )
     data = nf.TP(data)
     
-    phase_gui(data)
+    phasing_gui(data)
