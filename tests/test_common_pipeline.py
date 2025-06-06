@@ -8,6 +8,8 @@ import time
 
 data = nf.read_nmrpipe("tests/test2d.fid")
 
+print(data)
+
 
 start_time = time.perf_counter()
 
@@ -32,6 +34,7 @@ data = nf.TP(data) # 0.261 ms
 for entry in data.processing_history: print(f'{entry["Function"]} -> {entry["time_elapsed_s"]*1000:.3f} ms')
 print(f"\n--- Done! Elapsed: {time.perf_counter() - start_time:.3f} s", "\n")
 
+print(data)
 print(data.summary())
 nf.phasing_gui(data)
 

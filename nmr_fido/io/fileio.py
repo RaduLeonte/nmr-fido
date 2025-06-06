@@ -75,15 +75,16 @@ def read_nmrpipe(
                 "OBS":   ng_dic.get(f"{dim_code}OBS"),
             }
             
-            if int(ng_dic.get(f"{dim_code}QUADFLAG", 0)) == 0:
-                axis_dict["interleaved_data"] = True
+            axis_dict["interleaved_data"] = int(ng_dic.get(f"{dim_code}QUADFLAG", 0)) == 0
 
 
             axes.append(axis_dict)
-
+            
+        axes_order = [int(i-1) for i in ng_dic["FDDIMORDER"]]
+        axes_reordered = [axes[i] for i in axes_order if i < len(axes)][::-1]
         result = NMRData(
             ng_data,
-            axes=axes
+            axes=axes_reordered
         )
         
         return result

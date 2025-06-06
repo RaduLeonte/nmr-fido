@@ -74,6 +74,13 @@ def _interleaved_to_complex(data: NMRArrayType, dim: int = -1) -> NMRArrayType:
     if isinstance(data, NMRData):
         result = NMRData(complex_data, copy_from=data)
         result.axes[dim]["acqu_mode"] = "Complex"
+        
+        scale = result.axes[dim]["scale"]
+        scale_unit = result.axes[dim]["unit"]
+        if scale_unit in ["ppm", "Hz"]:
+            result.axes[dim]["scale"] = np.linspace(scale[0], scale[1], result.shape[dim])
+        else:
+            result.axes[dim]["scale"] = np.arange(result.shape[dim])
         return result
 
     return complex_data.view(type(data))
@@ -1462,13 +1469,26 @@ def extract_region(
     elif multiple_of:
         new_x_size = x_size - (x_size % multiple_of)
         end_idx = start_idx + new_x_size - 1
+    else:
+        new_x_size = x_size
+    
+    # Ensure even number of points
+    if new_x_size % 2 != 0:
+        new_x_size -= 1
+    
+    end_idx = start_idx + new_x_size - 1
         
     # Slice the data
-    
-    
     if adjust_spectral_width:
-        slicer = (slice(start_y_idx, end_y_idx + 1), slice(start_idx, end_idx + 1)) if result.ndim > 1 else slice(start_idx, end_idx + 1)
-        new_data = result[slicer]
+        slicer = [slice(None)] * result.ndim
+        
+        if result.ndim >= 2:
+            slicer[-2] = slice(start_y_idx, end_y_idx + 1)
+        
+        slicer[-1] = slice(start_idx, end_idx + 1)
+        
+        new_data = result[tuple(slicer)]
+    
     else:
         # Manual slicing on array level
         array = np.asarray(result)
@@ -2294,6 +2314,9 @@ def delete_imaginaries(data: NMRArrayType) -> NMRArrayType:
     # Create new NMRData object with real data and preserved metadata
     if isinstance(data, NMRData):
         result = NMRData(real_data, copy_from=data)
+        
+        if result.axes[-1]["interleaved_data"] == True:
+            result.axes[-1]["interleaved_data"] = False
 
         # Record processing history
         elapsed = perf_counter() - start_time

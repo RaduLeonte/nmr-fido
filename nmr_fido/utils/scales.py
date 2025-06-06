@@ -15,6 +15,8 @@ def get_hz_scale(npoints: int, sw: float, ori: float) -> np.ndarray:
     """
     points = np.arange(npoints)
     
+    # Center frequency (ori) might not be on the middle point so calculate the 
+    # frequency of the middle point
     o1_Hz = ori + sw / 2 - sw / npoints
     hz_scale = o1_Hz - sw * (points / npoints - 0.5)
     

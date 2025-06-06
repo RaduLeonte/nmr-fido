@@ -43,7 +43,7 @@ class CustomPlotItem(pg.PlotItem):
         pos = [pos.x() + offset[0], pos.y() + offset[1]]
         
         position_in_plot = self.vb.mapSceneToView(QPointF(*pos))
-        print("---", (position_in_plot.x(), position_in_plot.y()))
+        #print("---", (position_in_plot.x(), position_in_plot.y()))
         
         # Create custom actions
         action1 = QAction("Add marker", self)
@@ -117,7 +117,7 @@ class Marker():
         return
     
     def _update_trace(self) -> None:
-        self.parent._update_trace(self.trace, self.pos)
+        self.parent._update_trace(self.trace, self.pos, color=self.color)
         return
 
 
@@ -155,6 +155,12 @@ class MainWindow(QMainWindow):
         
         self.traces = []
         self.trace_mode = "rows"
+        self.xp0 = 0.0
+        self.xp1 = 0.0
+        self.yp0 = 0.0
+        self.yp1 = 0.0
+        self.xpivot = None
+        self.ypivot = None
         
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
@@ -202,8 +208,7 @@ class MainWindow(QMainWindow):
         
         main_spectrum_group.layout().addWidget(self._create_main_spectrum_toolbar()) # Add
         
-        self.main_spectrum_plot = self._create_main_spectrum_plot()
-        main_spectrum_group.layout().addWidget(self.main_spectrum_plot) # Add        
+        main_spectrum_group.layout().addWidget(self._create_main_spectrum_plot()) # Add        
         
         traces_group = QWidget()
         traces_group.setLayout(QVBoxLayout())
@@ -224,7 +229,7 @@ class MainWindow(QMainWindow):
         main_spectrum_toolbar.layout().setAlignment(Qt.AlignLeft)
         
         # Dimension select groups
-        for axis in ["X", "Y"]:
+        """ for axis in ["X", "Y"]:
             dim_controls = QWidget()
             dim_controls.setLayout(QHBoxLayout())
             main_spectrum_toolbar.layout().addWidget(dim_controls)
@@ -233,28 +238,24 @@ class MainWindow(QMainWindow):
             dim_controls.layout().addWidget(QLabel(f"{axis}:"))
             
             for label in axis_labels:
-                dim_controls.layout().addWidget(ToolbarButton(label)) # Add
+                dim_controls.layout().addWidget(ToolbarButton(label)) # Add """
         
         
         # Levels controls
-        levels_controls = QWidget()
-        levels_controls.setLayout(QHBoxLayout())
-        main_spectrum_toolbar.layout().addWidget(levels_controls)
-        
-        levels_controls.layout().addWidget(QLabel("Contours:"))
+        main_spectrum_toolbar.layout().addWidget(QLabel("Contours:"))
         
         increase_base_level_button = ToolbarButton("+")
-        levels_controls.layout().addWidget(increase_base_level_button)
+        main_spectrum_toolbar.layout().addWidget(increase_base_level_button)
         increase_base_level_button.setToolTip("Increase the contours base level")
         increase_base_level_button.pressed.connect(self._increase_base_level_button_callback)
         
         decrease_base_level_button = ToolbarButton("-")
-        levels_controls.layout().addWidget(decrease_base_level_button)
+        main_spectrum_toolbar.layout().addWidget(decrease_base_level_button)
         decrease_base_level_button.setToolTip("Decrease the contours base level")
         decrease_base_level_button.pressed.connect(self._decrease_base_level_button_callback)
         
         level_multiplier_input = QDoubleSpinBox()
-        levels_controls.layout().addWidget(level_multiplier_input)
+        main_spectrum_toolbar.layout().addWidget(level_multiplier_input)
         level_multiplier_input.setToolTip("Levels multiplier")
         level_multiplier_input.setMinimum(1.0)
         level_multiplier_input.setMaximum(10.0)
@@ -264,7 +265,7 @@ class MainWindow(QMainWindow):
         level_multiplier_input.valueChanged.connect(self._level_multiplier_input_callback)
         
         nr_levels_input = QSpinBox()
-        levels_controls.layout().addWidget(nr_levels_input)
+        main_spectrum_toolbar.layout().addWidget(nr_levels_input)
         nr_levels_input.setToolTip("Number of contours to draw")
         nr_levels_input.setMinimum(0)
         nr_levels_input.setMaximum(100)
@@ -306,17 +307,23 @@ class MainWindow(QMainWindow):
     
     #region Main spectrum
     def _create_main_spectrum_plot(self) -> QWidget:
-        main_spectrum_plot = pg.PlotWidget()
+        main_spectrum_container = QWidget()
+        main_spectrum_container.setLayout(QVBoxLayout())
+        main_spectrum_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_spectrum_container.layout().setContentsMargins(0, 0, 0, 0)
+        
+        self.main_spectrum_plot = pg.PlotWidget()
         plot_layout = pg.GraphicsLayout()
-        main_spectrum_plot.setCentralItem(plot_layout)
+        self.main_spectrum_plot.setCentralItem(plot_layout)
+        main_spectrum_container.layout().addWidget(self.main_spectrum_plot)
         
         #main_spectrum_plot.setBackground(QColor("#1e1e1e"))
-        main_spectrum_plot.setBackground(QColor(0, 0, 0, 0))
-        main_spectrum_plot.getAxis("bottom").setTextPen("w")
-        main_spectrum_plot.getAxis("left").setTextPen("w")
+        self.main_spectrum_plot.setBackground(QColor(0, 0, 0, 0))
+        self.main_spectrum_plot.getAxis("bottom").setTextPen("w")
+        self.main_spectrum_plot.getAxis("left").setTextPen("w")
         
         # Plot
-        self.plot_ax = CustomPlotItem(parent_plot_widget=main_spectrum_plot, main_window=self)
+        self.plot_ax = CustomPlotItem(parent_plot_widget=self.main_spectrum_plot, main_window=self)
         plot_layout.addItem(self.plot_ax)
         
         self.plot_ax.scene().sigMouseMoved.connect(self._on_mouse_move)
@@ -332,11 +339,11 @@ class MainWindow(QMainWindow):
         # Set labels
         axis_labels = [ax["label"] for ax in self.data.axes]
         
-        self.plot_ax.getAxis("bottom").setLabel(f"{axis_labels[0]} [ppm]")
+        self.plot_ax.getAxis("bottom").setLabel(f"{axis_labels[-1]} [ppm]")
         self.plot_ax.getAxis("bottom").setTextPen(COLOR_PALETTE["--text-color"])
         
         self.plot_ax.showAxis("right")
-        self.plot_ax.getAxis("right").setLabel(f"{axis_labels[1]}\n[ppm]")
+        self.plot_ax.getAxis("right").setLabel(f"{axis_labels[-2]}\n[ppm]")
         self.plot_ax.getAxis("right").label.setRotation(0)
         self.plot_ax.getAxis("right").label.setTextWidth(60)
         self.plot_ax.getAxis("right").setTextPen(COLOR_PALETTE["--text-color"])
@@ -345,8 +352,8 @@ class MainWindow(QMainWindow):
         self.plot_ax.getViewBox().setBackgroundColor(COLOR_PALETTE["--bg-color1"])
         
         # Scales
-        x_scale = self.data.axes[0]["scale"]
-        y_scale = self.data.axes[1]["scale"]
+        x_scale = self.data.axes[-1]["scale"]
+        y_scale = self.data.axes[-2]["scale"]
         self.plot_ax.setXRange(x_scale[-1], x_scale[0], padding=0)
         self.plot_ax.setYRange(y_scale[-1], y_scale[0], padding=0)
         # Invert scales if necessary
@@ -369,7 +376,7 @@ class MainWindow(QMainWindow):
         self._draw_plot()
 
         
-        return main_spectrum_plot
+        return main_spectrum_container
     
     
     def _on_mouse_move(self, pos):
@@ -377,7 +384,8 @@ class MainWindow(QMainWindow):
         
         # Update the status bar with the coordinates
         x, y = position_in_plot.x(), position_in_plot.y()
-        self.statusBar.showMessage(f"X: {x:.2f} ppm, Y: {y:.2f} ppm")
+        
+        self.statusBar.showMessage(f"Data shape: {self.data.shape}, Mouse position: ({x:.2f} ppm, {y:.2f} ppm)")
     
     
     def _median_absolute_deviation(self, data, k=1.4826) -> np.ndarray:
@@ -427,8 +435,8 @@ class MainWindow(QMainWindow):
         levels_positive, levels_negative = self._calculate_levels()
         
         # Scales
-        x_scale = self.data.axes[0]["scale"]
-        y_scale = self.data.axes[1]["scale"]
+        x_scale = self.data.axes[-1]["scale"]
+        y_scale = self.data.axes[-2]["scale"]
         
         # Draw bounding rect
         self.plot_ax.addItem(self.bounding_rect)
@@ -462,7 +470,22 @@ class MainWindow(QMainWindow):
     
     
     def _add_marker(self, pos):
-        marker = Marker(self, pos, self._create_trace())
+        x_range, y_range = self.plot_ax.getViewBox().viewRange()
+        x_span = np.max(x_range) - np.min(x_range)
+        y_span = np.max(y_range) - np.min(y_range)
+        fraction = 1/30
+        width = x_span * fraction
+        height = y_span * fraction
+        
+        color_cycle = ['r', 'g', 'c', 'y', 'w']
+        marker = Marker(
+            self,
+            pos,
+            self._create_trace(),
+            width=width,
+            height=height,
+            color=color_cycle[len(self._markers) % len(color_cycle)]
+        )
         self._markers.append(marker)
         self._draw_marker(marker)
             
@@ -498,15 +521,30 @@ class MainWindow(QMainWindow):
         traces_toolbar.setLayout(QHBoxLayout())
         traces_toolbar.layout().setAlignment(Qt.AlignLeft)
         
-        display_rows_button = ToolbarButton("Rows")
-        traces_toolbar.layout().addWidget(display_rows_button)
-        display_rows_button.setToolTip("Display rows")
-        display_rows_button.pressed.connect(self._display_rows_button_callback)
+        self.display_rows_button = ToolbarButton("Rows")
+        traces_toolbar.layout().addWidget(self.display_rows_button)
+        self.display_rows_button.setToolTip("Display rows")
+        self.display_rows_button.setCheckable(True)
+        self.display_rows_button.setChecked(True)
+        self.display_rows_button.pressed.connect(self._display_rows_button_callback)
         
-        display_columns_button = ToolbarButton("Columns")
-        traces_toolbar.layout().addWidget(display_columns_button)
-        display_columns_button.setToolTip("Display columns")
-        display_columns_button.pressed.connect(self._display_columns_button_callback)
+        self.display_columns_button = ToolbarButton("Columns")
+        traces_toolbar.layout().addWidget(self.display_columns_button)
+        self.display_columns_button.setToolTip("Display columns")
+        self.display_columns_button.setCheckable(True)
+        self.display_columns_button.pressed.connect(self._display_columns_button_callback)
+        
+        def save_phases():
+            p0 = self.p0_spin_box.value()
+            p1 = self.p1_spin_box.value()
+            if self.trace_mode == "rows":
+                self.xp0 = p0
+                self.xp1 = p1
+            else:
+                self.yp0 = p0
+                self.yp1 = p1
+            
+            self._update_all_traces()
         
         def create_slider(range):
             slider = QSlider(Qt.Horizontal)
@@ -543,6 +581,8 @@ class MainWindow(QMainWindow):
             spin_box.setValue(coarse_value + fine_value)
             spin_box.blockSignals(False)
             
+            save_phases()
+            
             self._update_all_traces()
                 
         def spin_box_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
@@ -557,6 +597,8 @@ class MainWindow(QMainWindow):
             slider_fine.blockSignals(True)
             slider_fine.setValue(fine_value)
             slider_fine.blockSignals(False)
+            
+            save_phases()
             
             self._update_all_traces()
         
@@ -597,12 +639,26 @@ class MainWindow(QMainWindow):
     
     
     def _display_rows_button_callback(self) -> None:
+        #self.display_rows_button.setChecked(True)
+        self.display_columns_button.setChecked(False)
+        
         self.trace_mode = "rows"
+        
+        self.p0_spin_box.setValue(self.xp0)
+        self.p1_spin_box.setValue(self.xp1)
+        
         self._update_all_traces()
         return
     
     def _display_columns_button_callback(self) -> None:
+        #self.display_columns_button.setChecked(True)
+        self.display_rows_button.setChecked(False)
+        
         self.trace_mode = "columns"
+        
+        self.p0_spin_box.setValue(self.yp0)
+        self.p1_spin_box.setValue(self.yp1)
+        
         self._update_all_traces()
         return
     
@@ -617,7 +673,26 @@ class MainWindow(QMainWindow):
     
     def _create_trace(self):
         trace = pg.PlotWidget()
-        trace.setBackground(QColor(0, 0, 0, 0))
+        trace.setBackground(None)
+        
+        vb = trace.getViewBox()
+        vb.setBackgroundColor("black")
+        vb.setMouseEnabled(x=False, y=True)
+        def on_click(event):
+            pos = event.scenePos()
+            target_ppm = vb.mapSceneToView(pos).x()
+            target_scale = self.data.axes[-1 if self.trace_mode == "rows" else -2]["scale"]
+            index = min(range(len(target_scale)), key=lambda i: abs(target_scale[i] - target_ppm))
+            
+            if self.trace_mode == "rows":
+                self.xpivot = index
+            else:
+                self.ypivot = index
+                
+            self._update_all_traces()
+            
+        vb.scene().sigMouseClicked.connect(on_click)
+        
         trace.getAxis("bottom").setTextPen("w")
         trace.showAxis("right")
         trace.getAxis("right").setTextPen("w")
@@ -639,11 +714,11 @@ class MainWindow(QMainWindow):
             marker._update_trace()
     
     
-    def _update_trace(self, trace, pos):
+    def _update_trace(self, trace, pos, color="r"):
         trace.clear()
         
-        x_scale = self.data.axes[0]["scale"]
-        y_scale = self.data.axes[1]["scale"]
+        x_scale = self.data.axes[-1]["scale"]
+        y_scale = self.data.axes[-2]["scale"]
         
         axis_labels = [ax["label"] for ax in self.data.axes]
         
@@ -668,14 +743,23 @@ class MainWindow(QMainWindow):
             
             trace.getAxis("bottom").setLabel(f"{axis_labels[1]} [ppm]")
         
-        print(self.trace_mode, target_ppm)
+        #print(self.trace_mode, target_ppm)
         
-        trace_data = nf.PS(trace_data, p0=self.p0_spin_box.value(), p1=self.p1_spin_box.value(), ht=True).real
+        p0 = self.xp0 if self.trace_mode == "rows" else self.yp0
+        p1 = self.xp1 if self.trace_mode == "rows" else self.yp1
+        trace_data = nf.PS(trace_data, p0=p0, p1=p1, ht=True).real
         
         trace_max = float(np.max(np.abs(trace_data)))
         if scale[0] > scale[-1]: trace.getViewBox().invertX(True)
         trace.setYRange(-trace_max, trace_max)
-        trace.plot(scale, trace_data)
+        trace.plot(scale, trace_data, pen=pg.mkPen(color=color))
+        
+        
+        pivot_pos = self.xpivot if self.trace_mode == "rows" else self.ypivot
+        pivot_pos = pivot_pos if pivot_pos is not None else 0
+        pivot_line = pg.InfiniteLine(pos=scale[pivot_pos], angle=90, movable=False, pen=pg.mkPen('g', width=2))
+        trace.addItem(pivot_line)
+        
         return
     #endregion UI
     
