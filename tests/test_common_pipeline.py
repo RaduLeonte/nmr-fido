@@ -6,28 +6,29 @@ import matplotlib.pyplot as plt
 import time
 
 
-data = nf.read_nmrpipe("tests/test2d.fid")
+data = nf.read_nmrpipe("tests/dnajb1_wt_ctddd.fid")
 
 print(data)
 
 
 start_time = time.perf_counter()
 
-data = nf.SP(data, off=0.35, end=0.98, pow=1, c=1.0) # 2.344 ms
+data = nf.SOL(data)
+data = nf.SP(data, off=0.35, end=0.98, pow=2, c=0.5) # 2.344 ms
 data = nf.ZF(data, size=4096) # 1.516 ms
 data = nf.FT(data) # 30.795 ms
-data = nf.PS(data, p0=-29.0, p1=0.0) # 10.278 ms
+data = nf.PS(data, p0=0.0, p1=0.0) # 10.278 ms
 data = nf.DI(data) # 3.497 m
-data = nf.EXT(data, x1="70ppm", xn="40ppm") # 3.532 ms
+data = nf.EXT(data, x1="11ppm", xn="5.5ppm") # 3.532 ms
 
 data = nf.TP(data) # 1.278 ms
 
-data = nf.SP(data, off=0.35, end=0.9, pow=1, c=0.5) # 1.008 ms
+data = nf.SP(data, off=0.35, end=0.9, pow=2, c=0.5) # 1.008 ms
 data = nf.ZF(data, size=2048) # 0.596 ms
 data = nf.FT(data) # 20.867 ms
 data = nf.PS(data, p0=0.0, p1=0.0) # 5.942 ms
 data = nf.DI(data) # 1.673 ms
-data = nf.EXT(data, x1="135ppm", xn="100ppm") # 2.200 ms
+#data = nf.EXT(data, x1="135ppm", xn="100ppm") # 2.200 ms
 
 data = nf.TP(data) # 0.261 ms
 
