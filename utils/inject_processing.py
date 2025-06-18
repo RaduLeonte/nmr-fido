@@ -75,10 +75,7 @@ def expose_processing_in_init() -> None:
                 alias_map.setdefault(func, []).append(alias)
 
     # Build the import section
-    import_block = [
-        "from .nmrdata import NMRData",
-        "from .core.processing import ("
-    ]
+    import_block = ["from .core.processing import ("]
     for func in functions:
         aliases = alias_map.get(func, [])
         if aliases:
@@ -89,21 +86,39 @@ def expose_processing_in_init() -> None:
     import_block.append("")
 
     # Build the __all__ block
-    all_block = ["__all__ = ["]
-    all_block.append('    "NMRData",')
+    all_block = ["__all__ += ["]
     for func in functions:
-        parts = [f'"{func}"'] + [f'"{alias}"' for alias in alias_map.get(func, [])]
-        all_block.append("    " + ", ".join(parts) + ",")
+        entries = [f'"{func}"'] + [f'"{alias}"' for alias in alias_map.get(func, [])]
+        all_block.append("    " + ", ".join(entries) + ",")
     all_block.append("]")
+    all_block.append("")
 
-    # Replace the relevant section in __init__.py
     init_lines = INIT_PATH.read_text().splitlines()
+    start_idx = None
+    end_idx = None
 
-    anchor = init_lines.index("from .nmrdata import NMRData")
+    for i, line in enumerate(init_lines):
+        if line.strip().startswith("from .core.processing import ("):
+            start_idx = i
+            break
 
-    new_init = init_lines[:anchor] + import_block + all_block
-    INIT_PATH.write_text("\n".join(new_init))
+    if start_idx is None:
+        raise ValueError("Could not find 'from .core.processing import (' in __init__.py")
+    
+    # Find the end of the existing __all__ += [ block
+    for j in range(start_idx + 1, len(init_lines)):
+        if init_lines[j].strip().startswith("__all__") and init_lines[j].strip().endswith("["):
+            for k in range(j + 1, len(init_lines)):
+                if init_lines[k].strip() == "]":
+                    end_idx = k + 1
+                    break
+            break
+        
+    if end_idx is None:
+        raise ValueError("Could not find end of '__all__ += [' block after import.")
 
+    new_init = init_lines[:start_idx] + import_block + all_block + init_lines[end_idx:]
+    INIT_PATH.write_text("\n".join(new_init) + "\n")
 
 if __name__ == "__main__":
     inject_alias_docstrings()

@@ -6,68 +6,71 @@ import matplotlib.pyplot as plt
 import time
 
 
-dic, data = ng.pipe.read("tests/test2d.fid")
+data = nf.read_nmrpipe("tests/dnajb1_wt_ctddd.fid")
 
-data = nf.NMRData(
-    data,
-    axes= [
-        {
-            "label": "15N",
-            "SW": 5555.55615234375,
-            "ORI": 3333.448974609375,
-            "OBS": 50.64799880981445,
-            "interleaved_data": True,
-        },
-        {
-            "label": "13C",
-            'SW': 50000.0,
-            'ORI': -18053.66015625,
-            'OBS': 125.69100189208984,
-        },
-    ]
-)
+print(data)
 
 
 start_time = time.perf_counter()
 
-data = nf.SP(data, off=0.35, end=0.98, pow=1, c=1.0) # 2.344 ms
+data = nf.SOL(data)
+data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 2.344 ms
 data = nf.ZF(data, size=4096) # 1.516 ms
 data = nf.FT(data) # 30.795 ms
-data = nf.PS(data, p0=-29.0, p1=0.0) # 10.278 ms
+data = nf.PS(data, p0=-25.42, p1=-94.50) # 10.278 ms
 data = nf.DI(data) # 3.497 m
-data = nf.EXT(data, x1="70ppm", xn="40ppm") # 3.532 ms
+data = nf.EXT(data, x1="11ppm", xn="5.5ppm") # 3.532 ms
 
 data = nf.TP(data) # 1.278 ms
 
-data = nf.SP(data, off=0.35, end=0.9, pow=1, c=0.5) # 1.008 ms
+#data = nf.LP(data, pred=400, ord=10)
+data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 1.008 ms
 data = nf.ZF(data, size=2048) # 0.596 ms
 data = nf.FT(data) # 20.867 ms
 data = nf.PS(data, p0=0.0, p1=0.0) # 5.942 ms
 data = nf.DI(data) # 1.673 ms
-data = nf.EXT(data, x1="135ppm", xn="100ppm") # 2.200 ms
+#data = nf.EXT(data, x1="135ppm", xn="100ppm") # 2.200 ms
 
 data = nf.TP(data) # 0.261 ms
 
 for entry in data.processing_history: print(f'{entry["Function"]} -> {entry["time_elapsed_s"]*1000:.3f} ms')
 print(f"\n--- Done! Elapsed: {time.perf_counter() - start_time:.3f} s", "\n")
-    
+
+print(data)
+print(data.summary())
+nf.phasing_gui(data)
+
 
 fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")
 
-limits_x = (data.axes[-1]["scale"][0], data.axes[-1]["scale"][-1])
-limits_y = (data.axes[-2]["scale"][0], data.axes[-2]["scale"][-1])
+level_multiplier = 1.2
+nr_levels = 16
+rows, cols = data.shape
+row_start, row_end = rows // 4, rows * 3 // 4
+col_start, col_end = cols // 4, cols * 3 // 4
+central_region = data.real[row_start:row_end, col_start:col_end]
+maximum = float(np.max(central_region))
+levels_positive = np.array([maximum / (level_multiplier ** j) for j in range(nr_levels)])[::-1]
+base_level = np.min(levels_positive)
+
 ax.contour(
-    data,
-    levels = 30_000 * 1.1 ** np.arange(16),
-    extent = (*limits_x, *limits_y),
+    data.real,
+    levels = levels_positive,
+    extent = data.extent(),
+    colors = "dodgerblue",
+)
+ax.contour(
+    data.real,
+    levels = -levels_positive[::-1],
+    extent = data.extent(),
     colors = "crimson",
 )
 
 plt.gca().invert_xaxis()
 plt.gca().invert_yaxis()
 ax.set_title("NMR Fido")
-ax.set_xlabel(data.axes[-1]["label"])
-ax.set_ylabel(data.axes[-2]["label"])
+ax.set_xlabel(f'{data.axes[-1]["label"]} [{data.axes[-1]["unit"]}]')
+ax.set_ylabel(f'{data.axes[-2]["label"]}\n[{data.axes[-1]["unit"]}]', rotation=0, ha="right")
 #ax.set_xlim(70, 40)
 #ax.set_ylim(135, 100)
 plt.show()

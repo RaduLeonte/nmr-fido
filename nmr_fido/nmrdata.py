@@ -149,10 +149,8 @@ class NMRData(np.ndarray):
             
             if isinstance(s, slice):
                 # Slice the scale data
-                
                 start, stop, step = s.indices(self.shape[i])
                 new_size = (stop - start + (step - 1)) // step
-                new_scale = axis_dict['scale'][s]
                 
                 if unit == "pts":
                     axis_dict["scale"] = np.arange(new_size)
@@ -161,18 +159,27 @@ class NMRData(np.ndarray):
                     full_size = self.shape[i]
                     sw, ori, obs = (axis_dict[k] for k in ("SW", "ORI", "OBS"))
 
-                    # Recalculate ppm scale and adjust spectral properties
-                    ppm_scale = get_ppm_scale(full_size, sw, ori, obs)
-                    new_ppm_scale = ppm_scale[s]
-                    ppm_min, ppm_max = new_ppm_scale.min(), new_ppm_scale.max()
+                    # Adjust spectral properties
+                    hz_scale = get_hz_scale(full_size, sw, ori) # calculate Hz scale
+                    new_hz_scale = hz_scale[s] # slice Hz scale
+                    new_size = len(new_hz_scale)
+                    
+                    new_sw = (np.max(new_hz_scale) - np.min(new_hz_scale))# * (new_size / (new_size - 1))
+                    o1_Hz = np.min(new_hz_scale) + new_sw / 2
+                    new_ori = o1_Hz - new_sw / 2 + new_sw / new_size
 
-                    axis_dict["scale"] = new_ppm_scale
-                    axis_dict["SW"] = sw * (new_size / full_size)
-                    axis_dict["ORI"] = obs * ppm_max  # ORI = OBS * ppm
-                    axis_dict["OBS"] = obs
+                    if unit == "ppm":
+                        axis_dict["scale"] = new_hz_scale/obs
+                        print(np.max(axis_dict["scale"]), np.min(axis_dict["scale"]))
+                    elif unit == "hz":
+                        axis_dict["scale"] = new_hz_scale
+                    
+                    axis_dict["SW"] = new_sw
+                    axis_dict["ORI"] = new_ori
+                    axis_dict["OBS"] = obs # OBS stays the same
 
                 else:
-                    axis_dict["scale"] = new_scale
+                    axis_dict["scale"] = axis_dict['scale'][s]
                 
                 new_axes.append(axis_dict)
             
@@ -212,7 +219,7 @@ class NMRData(np.ndarray):
                 size = len(scale)
                 unit = axis.get('unit', '')
                 range_str = f"{scale[0]:.2f}, {scale[-1]:.2f}" if len(scale) > 0 else "empty"
-                lines.append(f" {i} {axis_codes.get(i, ' ')} {label}: Size={size}, Range=[{range_str}], Unit={unit}")
+                lines.append(f" {i} {axis_codes.get(len(self.axes) - 1 - i, ' ')} {label}: Size={size}, Range=[{range_str}], Unit={unit}")
 
         # Display metadata keys
         #metadata_keys = list(self.metadata.keys()) if hasattr(self, 'metadata') and self.metadata else []
@@ -226,6 +233,7 @@ class NMRData(np.ndarray):
     def summary(self, verbose: bool = False) -> str:
         lines = [f"<NMRData shape={self.shape}, dtype={self.dtype}>"]
 
+        axis_codes = {0: "X", 1: "Y", 2: "Z"}
         for i, axis in enumerate(self.axes):
             label = axis.get("label", f"Axis {i}")
             scale = axis.get("scale", [])
@@ -235,6 +243,7 @@ class NMRData(np.ndarray):
                 range_str = f"{scale[0]:.3f}–{scale[-1]:.3f}"
             else:
                 range_str = "empty"
+
 
             axis_str = f"{label} [{unit} {range_str}]"
 
@@ -251,7 +260,7 @@ class NMRData(np.ndarray):
                 if extras:
                     axis_str += ", " + ", ".join(extras)
 
-            lines.append(f" Axis {i}: {axis_str}")
+            lines.append(f" Axis {i} {axis_codes.get(len(self.axes) - 1 - i, ' ')}: {axis_str}")
 
         return "\n".join(lines)
     
