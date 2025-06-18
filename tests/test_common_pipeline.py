@@ -17,13 +17,13 @@ data = nf.SOL(data)
 data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 2.344 ms
 data = nf.ZF(data, size=4096) # 1.516 ms
 data = nf.FT(data) # 30.795 ms
-data = nf.PS(data, p0=0.0, p1=0.0) # 10.278 ms
+data = nf.PS(data, p0=-25.42, p1=-94.50) # 10.278 ms
 data = nf.DI(data) # 3.497 m
 data = nf.EXT(data, x1="11ppm", xn="5.5ppm") # 3.532 ms
 
 data = nf.TP(data) # 1.278 ms
 
-data = nf.LP(data, pred=400, ord=10)
+#data = nf.LP(data, pred=400, ord=10)
 data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 1.008 ms
 data = nf.ZF(data, size=2048) # 0.596 ms
 data = nf.FT(data) # 20.867 ms
@@ -43,9 +43,25 @@ nf.phasing_gui(data)
 
 fig, ax = plt.subplots(1,1, figsize=(14,10), layout="constrained")
 
+level_multiplier = 1.2
+nr_levels = 16
+rows, cols = data.shape
+row_start, row_end = rows // 4, rows * 3 // 4
+col_start, col_end = cols // 4, cols * 3 // 4
+central_region = data.real[row_start:row_end, col_start:col_end]
+maximum = float(np.max(central_region))
+levels_positive = np.array([maximum / (level_multiplier ** j) for j in range(nr_levels)])[::-1]
+base_level = np.min(levels_positive)
+
 ax.contour(
-    data,
-    levels = 20_000 * 1.2 ** np.arange(16),
+    data.real,
+    levels = levels_positive,
+    extent = data.extent(),
+    colors = "dodgerblue",
+)
+ax.contour(
+    data.real,
+    levels = -levels_positive[::-1],
     extent = data.extent(),
     colors = "crimson",
 )
