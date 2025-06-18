@@ -156,8 +156,10 @@ class MainWindow(QMainWindow):
         self.traces = []
         self.trace_mode = "rows"
         self.xp0 = 0.0
+        self.xp0_prime = 0.0
         self.xp1 = 0.0
         self.yp0 = 0.0
+        self.yp0_prime = 0.0
         self.yp1 = 0.0
         self.xpivot = None
         self.ypivot = None
@@ -563,32 +565,46 @@ class MainWindow(QMainWindow):
             
             return spinbox
         
-        def add_callbacks(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
-            slider_coarse.valueChanged.connect(
-                lambda: slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
-            )
-            slider_fine.valueChanged.connect(
-                lambda: slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
-            )
-            spin_box.valueChanged.connect(
-                lambda: spin_box_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
-            )
+        def add_callbacks(order, slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            if order == 0:
+                slider_coarse.valueChanged.connect(
+                    lambda: slider_callback_p0(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
+                slider_fine.valueChanged.connect(
+                    lambda: slider_callback_p0(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
+                spin_box.valueChanged.connect(
+                    lambda: spin_box_callback_p0(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
+            else:
+                slider_coarse.valueChanged.connect(
+                    lambda: slider_callback_p1(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
+                slider_fine.valueChanged.connect(
+                    lambda: slider_callback_p1(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
+                spin_box.valueChanged.connect(
+                    lambda: spin_box_callback_p1(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine)
+                )
         
-        def slider_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+        def slider_callback_p0(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
             coarse_value = float(slider_coarse.value() / slider_factor_coarse)
             fine_value = float(slider_fine.value() / slider_factor_fine)
-            spin_box.blockSignals(True)
-            spin_box.setValue(coarse_value + fine_value)
-            spin_box.blockSignals(False)
+            phase = coarse_value + fine_value
             
-            save_phases()
+            spin_box.setValue(phase)
+        
+        def slider_callback_p1(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            coarse_value = float(slider_coarse.value() / slider_factor_coarse)
+            fine_value = float(slider_fine.value() / slider_factor_fine)
+            phase = coarse_value + fine_value
             
-            self._update_all_traces()
-                
-        def spin_box_callback(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
-            total_value = spin_box.value()
-            coarse_value = int(total_value)
-            fine_value = int((total_value - coarse_value) * slider_factor_fine)
+            spin_box.setValue(phase)
+            
+        def spin_box_callback_p0(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            phase = spin_box.value()
+            coarse_value = int(phase)
+            fine_value = int((phase - coarse_value) * slider_factor_fine)
             
             slider_coarse.blockSignals(True)
             slider_coarse.setValue(coarse_value * slider_factor_coarse)
@@ -598,7 +614,58 @@ class MainWindow(QMainWindow):
             slider_fine.setValue(fine_value)
             slider_fine.blockSignals(False)
             
-            save_phases()
+            if self.trace_mode == "rows":
+                self.xp0 = phase
+                self.xp0_prime = phase
+            else:
+                self.yp0 = phase
+                self.yp0_prime = phase
+            
+            self._update_all_traces()
+                
+        def spin_box_callback_p1(slider_coarse, slider_fine, spin_box, slider_factor_coarse, slider_factor_fine):
+            p1 = spin_box.value()
+            coarse_value = int(p1)
+            fine_value = int((p1 - coarse_value) * slider_factor_fine)
+            
+            slider_coarse.blockSignals(True)
+            slider_coarse.setValue(coarse_value * slider_factor_coarse)
+            slider_coarse.blockSignals(False)
+            
+            slider_fine.blockSignals(True)
+            slider_fine.setValue(fine_value)
+            slider_fine.blockSignals(False)
+            
+            if self.trace_mode == "rows":
+                self.xp1 = p1
+            else:
+                self.yp1 = p1
+            
+            if self.trace_mode == "rows":
+                p0 = self.xp0
+                pivot = self.xpivot if self.xpivot is not None else 0
+                scale = self.data.axes[-1]["scale"]
+                pivot_frac = pivot / scale.size
+                
+                self.xp0_prime = p0 - p1*pivot_frac
+                print(f"{p0=}; {p1=}; {pivot_frac=} => {self.xp0_prime=}")
+                
+                self.p0_spin_box.blockSignals(True)
+                self.p0_spin_box.setValue(self.xp0_prime)
+                self.p0_spin_box.blockSignals(False)
+            else:
+                p0 = self.yp0
+                pivot = self.ypivot if self.ypivot is not None else 0
+                scale = self.data.axes[-2]["scale"]
+                pivot_frac = pivot / scale.size
+                
+                self.yp0_prime = self.yp0 - p1*pivot_frac
+                print(f"{p0=}; {p1=}; {pivot_frac=} => {self.yp0_prime=}")
+                
+                self.p0_spin_box.blockSignals(True)
+                self.p0_spin_box.setValue(self.yp0_prime)
+                self.p0_spin_box.blockSignals(False)
+
             
             self._update_all_traces()
         
@@ -618,7 +685,7 @@ class MainWindow(QMainWindow):
         self.p0_spin_box = p0_spin_box
         traces_toolbar.layout().addWidget(p0_spin_box)
             
-        add_callbacks(p0_slider_coarse, p0_slider_fine, p0_spin_box, slider_factor_coarse, slider_factor_fine)
+        add_callbacks(0, p0_slider_coarse, p0_slider_fine, p0_spin_box, slider_factor_coarse, slider_factor_fine)
         
         
         traces_toolbar.layout().addWidget(QLabel("P1"))
@@ -633,7 +700,7 @@ class MainWindow(QMainWindow):
         self.p1_spin_box = p1_spin_box
         traces_toolbar.layout().addWidget(p1_spin_box)
             
-        add_callbacks(p1_slider_coarse, p1_slider_fine, p1_spin_box, slider_factor_coarse, slider_factor_fine)
+        add_callbacks(1, p1_slider_coarse, p1_slider_fine, p1_spin_box, slider_factor_coarse, slider_factor_fine)
         
         return traces_toolbar
     
@@ -745,7 +812,7 @@ class MainWindow(QMainWindow):
         
         #print(self.trace_mode, target_ppm)
         
-        p0 = self.xp0 if self.trace_mode == "rows" else self.yp0
+        p0 = self.xp0_prime if self.trace_mode == "rows" else self.yp0_prime
         p1 = self.xp1 if self.trace_mode == "rows" else self.yp1
         trace_data = nf.PS(trace_data, p0=p0, p1=p1, ht=True).real
         

@@ -1316,12 +1316,12 @@ def phase(
             array = zero_fill(array, final_size=next_pow2)
     
     npoints = array.shape[-1]
-    x = np.arange(npoints)
 
+    f = np.linspace(0, 1, npoints)
     if exponential_correction:
-        phase_array = np.deg2rad(p0 * np.exp(-decay_constant * x / npoints))
+        phase_array = np.deg2rad(p0 * np.exp(-decay_constant*f))
     else:
-        phase_array = np.deg2rad(p0 + p1*( x / npoints))
+        phase_array = np.deg2rad(p0 + p1*f)
     
     if invert:
         phase_array = -phase_array

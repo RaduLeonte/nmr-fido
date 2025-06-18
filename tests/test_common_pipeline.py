@@ -14,7 +14,7 @@ print(data)
 start_time = time.perf_counter()
 
 data = nf.SOL(data)
-data = nf.SP(data, off=0.35, end=0.98, pow=2, c=0.5) # 2.344 ms
+data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 2.344 ms
 data = nf.ZF(data, size=4096) # 1.516 ms
 data = nf.FT(data) # 30.795 ms
 data = nf.PS(data, p0=0.0, p1=0.0) # 10.278 ms
@@ -23,7 +23,8 @@ data = nf.EXT(data, x1="11ppm", xn="5.5ppm") # 3.532 ms
 
 data = nf.TP(data) # 1.278 ms
 
-data = nf.SP(data, off=0.35, end=0.9, pow=2, c=0.5) # 1.008 ms
+data = nf.LP(data, pred=400, ord=10)
+data = nf.SP(data, off=0.5, end=0.98, pow=3, c=0.5) # 1.008 ms
 data = nf.ZF(data, size=2048) # 0.596 ms
 data = nf.FT(data) # 20.867 ms
 data = nf.PS(data, p0=0.0, p1=0.0) # 5.942 ms
